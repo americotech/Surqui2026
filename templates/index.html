@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Sistema de Gestión de Rentas</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <h2 class="mb-4">Panel Administrativo</h2>
+        <div class="mb-3">
+            {% if editable %}
+            <a href="{{ url_for('logout') }}" class="btn btn-secondary">Cerrar Sesión</a>
+            {% else %}
+            <a href="{{ url_for('login') }}" class="btn btn-primary">Modo Administrador</a>
+            {% endif %}
+        </div>
+        
+        <form action="/update" method="POST">
+            <div class="card mb-4 border-primary">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <label class="fw-bold">Precio del Dólar (S/.)</label>
+                            {% if editable %}
+                            <input type="number" step="0.01" name="precio_dolar" class="form-control w-50" value="{{ dolar }}">
+                            {% else %}
+                            <p class="mt-2">{{ "%.2f"|format(dolar) }}</p>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            <label class="fw-bold">Fecha Actual</label>
+                            <p class="mt-2">{{ current_date }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-4 border-success">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <h5 class="card-title mb-3 text-start">Totales de Ingreso Neto</h5>
+                            <p class="mb-1 text-start"><strong>Soles (S/.):</strong> {{ "%.2f"|format(total_ingreso_neto) }}</p>
+                            <p class="mb-0 text-start"><strong>Dólares (USD):</strong> {{ "%.2f"|format(total_ingreso_dolares) }}</p>
+                        </div>
+                        <div class="col-md-4">
+                            <p class="mb-1 text-start"><strong>Pago de Cuota:</strong> {{ "%.2f"|format(pago_cuota) }} USD</p>
+                            <p class="mb-1 text-start"><strong>Gasto Father:</strong> {{ "%.2f"|format(gasto_father) }} USD</p>
+                            <p class="mb-0 bg-success text-white p-2 rounded text-start"><strong>Saldo Mother:</strong> {{ "%.2f"|format(saldo_mother) }} USD</p>
+                        </div>
+                        <div class="col-md-4 d-flex align-items-end justify-content-end">
+                            <p class="mb-0 text-end bg-warning p-2 rounded" style="font-size: 1.89rem;"><strong>Cuotas Pendientes:</strong> {{ cuotas_pendientes }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-responsive bg-white p-3 shadow-sm rounded">
+                <table class="table table-hover align-middle">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>ID</th>
+                            <th>Departamento</th>
+                            <th>Porcentaje (%)</th>
+                            <th>Renta</th>
+                            <th>Costo Administrativo (Renta - %)</th>
+                            <th>Ingreso Neto</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for dep in departamentos %}
+                        <tr>
+                            <td>{{ dep.id }} <input type="hidden" name="id" value="{{ dep.id }}"></td>
+                            <td class="fw-bold text-primary">{{ dep.nombre }}</td>
+                            <td>
+                                <input type="number" step="0.1" name="porcentaje_{{ dep.id }}" class="form-control" value="{{ dep.porcentaje }}" {% if not editable %}disabled{% endif %}>
+                            </td>
+                            <td>
+                                <input type="number" step="0.01" name="renta_{{ dep.id }}" class="form-control" value="{{ dep.renta }}" {% if not editable %}disabled{% endif %}>
+                            </td>
+                            <td class="bg-light text-end">
+                                <span class="badge bg-success fs-6">S/. {{ "%.2f"|format(dep.costo_administrativo) }}</span>
+                            </td>
+                            <td class="bg-light text-end">
+                                <span class="badge bg-info fs-6">S/. {{ "%.2f"|format(dep.ingreso_neto) }}</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if editable %}
+            <div class="mt-4">
+                <button type="submit" class="btn btn-primary btn-lg w-100">Guardar Cambios en Base de Datos</button>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</body>
+</html>
