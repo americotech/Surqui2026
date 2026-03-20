@@ -1,3 +1,6 @@
 Flask
 gunicorn==20.1.0
+<<<<<<< HEAD
 setuptools==65.5.0
+=======
+>>>>>>> ee8c8d599cf56d5b875935156a2bd8aa72c9d915

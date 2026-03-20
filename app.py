@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 import sqlite3
 import datetime
+from datetime import timezone, timedelta
 
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'  # Cambia esto por una clave segura
@@ -88,10 +89,10 @@ def index():
     start_date = datetime.date(2026, 4, 1)
     current_date = datetime.date.today()
     if current_date < start_date:
-        cuotas_pendientes = 36
+        cuotas_pendientes = 23
     else:
         months_passed = (current_date.year - start_date.year) * 12 + (current_date.month - start_date.month)
-        cuotas_pendientes = max(0, 36 - months_passed)
+        cuotas_pendientes = max(0, 23 - months_passed)
     
     current_date_str = current_date.strftime("%d/%m/%Y")
     editable = 'admin' in session
