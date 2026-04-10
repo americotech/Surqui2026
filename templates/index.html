@@ -7,13 +7,16 @@
 </head>
 <body class="bg-light">
     <div class="container py-5">
-        <h2 class="mb-4">Panel Administrativo</h2>
-        <div class="mb-3">
-            {% if editable %}
-            <a href="{{ url_for('logout') }}" class="btn btn-secondary">Cerrar Sesión</a>
-            {% else %}
-            <a href="{{ url_for('login') }}" class="btn btn-primary">Modo Administrador</a>
-            {% endif %}
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="mb-0">Panel Administrativo</h2>
+            <div>
+                <a href="{{ url_for('gastos') }}" class="btn btn-outline-primary me-2">Gastos Generales</a>
+                {% if editable %}
+                <a href="{{ url_for('logout') }}" class="btn btn-secondary">Cerrar Sesión</a>
+                {% else %}
+                <a href="{{ url_for('login') }}" class="btn btn-primary">Modo Administrador</a>
+                {% endif %}
+            </div>
         </div>
         
         <form action="/update" method="POST">

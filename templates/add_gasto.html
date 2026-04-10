@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Añadir Gasto</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>Añadir Nuevo Gasto</h2>
+            <a href="{{ url_for('gastos') }}" class="btn btn-outline-secondary">Volver</a>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <form action="{{ url_for('add_gasto') }}" method="POST">
+                    {% if error %}
+                    <div class="alert alert-danger" role="alert">
+                        {{ error }}
+                    </div>
+                    {% endif %}
+                    <div class="mb-3">
+                        <label for="fecha" class="form-label">Fecha</label>
+                        <input type="date" class="form-control" id="fecha" name="fecha" required value="{{ fecha_default }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="nombre_gasto" class="form-label">Nombre del Gasto</label>
+                        <input type="text" class="form-control" id="nombre_gasto" name="nombre_gasto" required value="{{ nombre_gasto }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="descripcion" class="form-label">Descripción</label>
+                        <textarea class="form-control" id="descripcion" name="descripcion" rows="3">{{ descripcion }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="categoria" class="form-label">Categoría</label>
+                        <select class="form-select" id="categoria" name="categoria" required>
+                            <option value="Transporte" {% if categoria == 'Transporte' %}selected{% endif %}>Transporte</option>
+                            <option value="Alimentación" {% if categoria == 'Alimentación' %}selected{% endif %}>Alimentación</option>
+                            <option value="Entretenimiento" {% if categoria == 'Entretenimiento' %}selected{% endif %}>Entretenimiento</option>
+                            <option value="Alimentos" {% if categoria == 'Alimentos' %}selected{% endif %}>Alimentos</option>
+                            <option value="Ropa" {% if categoria == 'Ropa' %}selected{% endif %}>Ropa</option>
+                            <option value="Limpieza" {% if categoria == 'Limpieza' %}selected{% endif %}>Limpieza</option>
+                            <option value="Nana" {% if categoria == 'Nana' %}selected{% endif %}>Nana</option>
+                            <option value="Salud" {% if categoria == 'Salud' %}selected{% endif %}>Salud</option>
+                            <option value="Mobiliario" {% if categoria == 'Mobiliario' %}selected{% endif %}>Mobiliario</option>
+                            <option value="Otros" {% if categoria == 'Otros' %}selected{% endif %}>Otros</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="costo" class="form-label">Costo (en Soles)</label>
+                        <input type="number" step="0.01" class="form-control" id="costo" name="costo" required value="{{ costo }}">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Guardar Gasto</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

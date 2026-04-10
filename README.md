@@ -12,7 +12,7 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-La aplicación crea `gestion.db` en el mismo directorio si no existe. Si ves `ModuleNotFoundError: No module named 'flask'`, instala las dependencias con el paso 1.
+La aplicación crea `gestion.db` en el mismo directorio si no existe. En producción, define la variable de entorno `SECRET_KEY` antes de ejecutar la app. Si ves `ModuleNotFoundError: No module named 'flask'`, instala las dependencias con el paso 1.
 
 Notas:
 - La ruta del proyecto es el directorio que contiene `app.py`.
