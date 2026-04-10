@@ -86,7 +86,7 @@ def init_db():
 def login():
     if request.method == 'POST':
         password = request.form.get('password')
-        if password == 'admin123':  # Cambia la contraseña aquí
+        if password == 'Artemis-02':  # Cambia la contraseña aquí
             session['admin'] = True
             return redirect(url_for('index'))
         else:
