@@ -227,32 +227,89 @@ def edit_gasto(gasto_id):
 @app.route('/gastos/semana')
 def gastos_semana():
     conn = get_db_connection()
-    # Gastos de la semana actual
+    
     today = datetime.date.today()
-    start_of_week = today - datetime.timedelta(days=today.weekday())
-    end_of_week = start_of_week + datetime.timedelta(days=6)
-    gastos_semana = conn.execute('SELECT * FROM gastos WHERE fecha BETWEEN ? AND ? ORDER BY fecha DESC',
-                                 (start_of_week, end_of_week)).fetchall()
+    
+    # Semana Actual
+    start_current = today - datetime.timedelta(days=today.weekday())
+    end_current = start_current + datetime.timedelta(days=6)
+    
+    # Semana Anterior
+    start_previous = start_current - datetime.timedelta(days=7)
+    end_previous = end_current - datetime.timedelta(days=7)
+    
+    # Consultas
+    gastos_current = conn.execute('''
+        SELECT * FROM gastos 
+        WHERE fecha BETWEEN ? AND ? 
+        ORDER BY fecha DESC
+    ''', (start_current, end_current)).fetchall()
+    
+    gastos_previous = conn.execute('''
+        SELECT * FROM gastos 
+        WHERE fecha BETWEEN ? AND ? 
+        ORDER BY fecha DESC
+    ''', (start_previous, end_previous)).fetchall()
+    
+    # Valor del dólar
     row = conn.execute('SELECT dolar FROM config WHERE id = 1').fetchone()
     dolar = row['dolar'] if row is not None else 1.0
-    total_semana = sum(float(g['costo'] or 0) for g in gastos_semana)
-    total_semana_usd = total_semana / dolar if dolar else 0.0
+    
+    # Totales Semana Actual
+    total_current = sum(float(g['costo'] or 0) for g in gastos_current)
+    total_current_usd = total_current / dolar if dolar else 0.0
+    
+    # Totales Semana Anterior
+    total_previous = sum(float(g['costo'] or 0) for g in gastos_previous)
+    total_previous_usd = total_previous / dolar if dolar else 0.0
+    
     conn.close()
+    
+    # Datos por día para gráficos (Semana Actual)
+    dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
     gastos_por_dia_pen = defaultdict(float)
     gastos_por_dia_usd = defaultdict(float)
-    dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
-    for g in gastos_semana:
+    
+    for g in gastos_current:
         costo = float(g['costo'] or 0)
         fecha = datetime.datetime.strptime(g['fecha'], '%Y-%m-%d').date()
-        dia_semana = fecha.weekday()  # 0=Lunes, 6=Domingo
+        dia_semana = fecha.weekday()
         gastos_por_dia_pen[dias[dia_semana]] += costo
         gastos_por_dia_usd[dias[dia_semana]] += costo / dolar if dolar else 0.0
-    labels = dias
+    
     data_pen = [gastos_por_dia_pen[dia] for dia in dias]
     data_usd = [gastos_por_dia_usd[dia] for dia in dias]
-    editable = 'admin' in session
-    return render_template('gastos_semana.html', editable=editable, gastos=gastos_semana, total_semana=total_semana, total_semana_usd=total_semana_usd, start_of_week=start_of_week, end_of_week=end_of_week, labels=labels, data_pen=data_pen, data_usd=data_usd)
 
+    gastos_previous_por_dia_pen = defaultdict(float)
+    gastos_previous_por_dia_usd = defaultdict(float)
+    for g in gastos_previous:
+        costo = float(g['costo'] or 0)
+        fecha = datetime.datetime.strptime(g['fecha'], '%Y-%m-%d').date()
+        dia_semana = fecha.weekday()
+        gastos_previous_por_dia_pen[dias[dia_semana]] += costo
+        gastos_previous_por_dia_usd[dias[dia_semana]] += costo / dolar if dolar else 0.0
+
+    data_previous_pen = [gastos_previous_por_dia_pen[dia] for dia in dias]
+    data_previous_usd = [gastos_previous_por_dia_usd[dia] for dia in dias]
+    
+    editable = 'admin' in session
+    
+    return render_template('gastos_semana.html', 
+                           editable=editable,
+                           gastos=gastos_current,           # gastos de esta semana
+                           total_semana=total_current,
+                           total_semana_usd=total_current_usd,
+                           total_previous=total_previous,
+                           total_previous_usd=total_previous_usd,
+                           start_of_week=start_current,
+                           end_of_week=end_current,
+                           start_previous=start_previous,
+                           end_previous=end_previous,
+                           labels=dias,
+                           data_pen=data_pen,
+                           data_usd=data_usd,
+                           data_previous_pen=data_previous_pen,
+                           data_previous_usd=data_previous_usd)
 @app.route('/gastos/mes')
 def gastos_mes():
     conn = get_db_connection()
