@@ -4,7 +4,8 @@ import datetime
 import calendar
 from collections import defaultdict
 
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory
+import openpyxl
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'supersecretkey')  # En producción, define SECRET_KEY en variable de entorno
@@ -15,6 +16,51 @@ def get_db_connection():
     conn = sqlite3.connect(DATABASE, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def load_tributos_rows():
+    excel_path = os.path.join(app.root_path, 'Cronograma de pagos 2026.xlsx')
+    rows = []
+    if not os.path.exists(excel_path):
+        return rows
+
+    wb = openpyxl.load_workbook(excel_path, data_only=True)
+    ws = wb.active
+    headers = []
+
+    for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+        if idx == 1:
+            continue
+        if idx == 3:
+            raw_headers = [cell if cell is not None else '' for cell in row]
+            headers = []
+            for header in raw_headers:
+                if 'Item' in header:
+                    headers.append('Item')
+                elif 'Fecha' in header:
+                    headers.append('Fecha de vencimiento')
+                elif 'Concepto' in header:
+                    headers.append('Concepto')
+                elif 'Monto' in header:
+                    headers.append('Monto')
+                elif 'Estado' in header:
+                    headers.append('Estado')
+                else:
+                    headers.append(header)
+            continue
+        if idx > 3:
+            if not any(row):
+                continue
+            row_data = dict(zip(headers, row))
+            if 'Monto' not in row_data:
+                row_data['Monto'] = row_data.get('Monto total a pagar ese d�a (S/)', 0)
+            key = str(row_data.get('Item') or idx)
+            row_data['Estado'] = row_data.get('Estado') or ''
+            row_data['Item'] = int(row_data['Item']) if row_data.get('Item') is not None else ''
+            row_data['key'] = key
+            rows.append(row_data)
+
+    return rows
 
 
 def column_exists(conn, table, column_name):
@@ -123,6 +169,45 @@ def index():
     editable = 'admin' in session
     conn.close()
     return render_template('index.html', departamentos=deps, dolar=dolar, total_ingreso_neto=total_ingreso_neto, total_ingreso_dolares=total_ingreso_dolares, pago_cuota=pago_cuota, gasto_father=gasto_father, saldo_mother=saldo_mother, cuotas_pendientes=cuotas_pendientes, editable=editable, current_date=current_date_str)
+
+@app.route('/tributos', methods=['GET', 'POST'])
+def tributos():
+    status_updates = session.setdefault('tributos_status', {})
+    rows = load_tributos_rows()
+    editable = 'admin' in session
+
+    if request.method == 'POST':
+        if not editable:
+            return redirect(url_for('tributos'))
+
+        for row in rows:
+            key = row['key']
+            estado = request.form.get(f'status_{key}', '').strip()
+            if estado not in ('Pagado', 'Pendiente'):
+                estado = ''
+            status_updates[key] = estado
+        session['tributos_status'] = status_updates
+        return redirect(url_for('tributos'))
+
+    for row in rows:
+        row['Estado'] = status_updates.get(row['key'], row.get('Estado', ''))
+
+    return render_template('tributos_muni_surqui.html', editable=editable, rows=rows)
+
+@app.route('/download/cronograma')
+def download_cronograma():
+    return send_from_directory(app.root_path, 'Cronograma de pagos 2026.xlsx', as_attachment=True)
+
+
+@app.route('/predial')
+def predial():
+    editable = 'admin' in session
+    return render_template('predial.html', editable=editable)
+
+@app.route('/arbitrios')
+def arbitrios():
+    editable = 'admin' in session
+    return render_template('arbitrios.html', editable=editable)
 
 @app.route('/gastos')
 def gastos():

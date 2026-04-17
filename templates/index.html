@@ -10,6 +10,7 @@
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h2 class="mb-0">Panel Administrativo</h2>
             <div>
+                <a href="{{ url_for('tributos') }}" class="btn btn-outline-primary me-2">TRIBUTOS MUNI SURQUI</a>
                 <a href="{{ url_for('gastos') }}" class="btn btn-outline-primary me-2">Gastos Generales</a>
                 {% if editable %}
                 <a href="{{ url_for('logout') }}" class="btn btn-secondary">Cerrar Sesión</a>
