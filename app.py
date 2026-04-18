@@ -17,7 +17,6 @@ def get_db_connection():
     if database_url:
         # Producción: PostgreSQL
         import psycopg2
-        from psycopg2.extras import RealDictCursor
         conn = psycopg2.connect(database_url, sslmode='require')
         return conn
     else:
@@ -26,6 +25,12 @@ def get_db_connection():
         conn = sqlite3.connect(DATABASE)
         conn.row_factory = sqlite3.Row
         return conn
+
+def get_cursor_factory():
+    if 'DATABASE_URL' in os.environ:
+        from psycopg2.extras import RealDictCursor
+        return RealDictCursor
+    return None
 
 def get_placeholder():
     return '%s' if 'DATABASE_URL' in os.environ else '?'
@@ -148,8 +153,8 @@ def logout():
 @app.route('/')
 def index():
     conn = get_db_connection()
-    # Usamos RealDictCursor para que los datos lleguen como diccionario a tu HTML
-    cur = conn.cursor(cursor_factory=RealDictCursor) 
+    cursor_factory = get_cursor_factory()
+    cur = conn.cursor(cursor_factory=cursor_factory) if cursor_factory else conn.cursor()
     
     try:
         cur.execute('SELECT * FROM departamentos ORDER BY id ASC')
@@ -180,14 +185,13 @@ def index():
     cuotas_pendientes = max(0, 23 - months_passed)
     
     editable = 'admin' in session
-    cur.close()
-    conn.close()
     return render_template('index.html', departamentos=deps, dolar=dolar, total_ingreso_neto=total_ingreso_neto, total_ingreso_dolares=total_ingreso_dolares, pago_cuota=pago_cuota, gasto_father=gasto_father, saldo_mother=saldo_mother, cuotas_pendientes=cuotas_pendientes, editable=editable, current_date=current_date.strftime("%d/%m/%Y"))
 
 @app.route('/gastos')
 def gastos():
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cursor_factory = get_cursor_factory()
+    cur = conn.cursor(cursor_factory=cursor_factory) if cursor_factory else conn.cursor()
     cur.execute('SELECT dolar FROM config WHERE id = 1')
     dolar = cur.fetchone()['dolar']
     cur.execute('SELECT * FROM gastos ORDER BY fecha DESC')
