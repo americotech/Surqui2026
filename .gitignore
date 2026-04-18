@@ -4,5 +4,4 @@ __pycache__/
 venv/
 .env
 .DS_Store
-gestion.db
 
