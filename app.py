@@ -35,6 +35,19 @@ def get_cursor_factory():
 def get_placeholder():
     return '%s' if 'DATABASE_URL' in os.environ else '?'
 
+
+def get_cursor(conn):
+    cursor_factory = get_cursor_factory()
+    return conn.cursor(cursor_factory=cursor_factory) if cursor_factory else conn.cursor()
+
+
+def coerce_date(value):
+    if isinstance(value, datetime.date):
+        return value
+    if isinstance(value, str):
+        return datetime.date.fromisoformat(value[:10])
+    return None
+
 # --- CARGA DE EXCEL (Sin cambios) ---
 def load_tributos_rows():
     excel_path = os.path.join(app.root_path, 'Cronograma de pagos 2026.xlsx')
@@ -153,8 +166,7 @@ def logout():
 @app.route('/')
 def index():
     conn = get_db_connection()
-    cursor_factory = get_cursor_factory()
-    cur = conn.cursor(cursor_factory=cursor_factory) if cursor_factory else conn.cursor()
+    cur = get_cursor(conn)
     
     try:
         cur.execute('SELECT * FROM departamentos ORDER BY id ASC')
@@ -190,8 +202,7 @@ def index():
 @app.route('/gastos')
 def gastos():
     conn = get_db_connection()
-    cursor_factory = get_cursor_factory()
-    cur = conn.cursor(cursor_factory=cursor_factory) if cursor_factory else conn.cursor()
+    cur = get_cursor(conn)
     cur.execute('SELECT dolar FROM config WHERE id = 1')
     dolar = cur.fetchone()['dolar']
     cur.execute('SELECT * FROM gastos ORDER BY fecha DESC')
@@ -242,6 +253,204 @@ def update():
     cur.close()
     conn.close()
     return redirect(url_for('index'))
+
+
+@app.route('/tributos', methods=['GET', 'POST'])
+def tributos():
+    rows = load_tributos_rows()
+    status_map = session.get('tributos_status', {})
+
+    if request.method == 'POST' and 'admin' in session:
+        for row in rows:
+            key = row.get('key')
+            selected = request.form.get(f'status_{key}', '')
+            if selected:
+                status_map[str(key)] = selected
+            else:
+                status_map.pop(str(key), None)
+        session['tributos_status'] = status_map
+
+    for row in rows:
+        key = str(row.get('key'))
+        if key in status_map:
+            row['Estado'] = status_map[key]
+
+    return render_template('tributos_muni_surqui.html', rows=rows, editable='admin' in session)
+
+
+@app.route('/download/cronograma')
+def download_cronograma():
+    filename = 'Cronograma de pagos 2026.xlsx'
+    return send_from_directory(app.root_path, filename, as_attachment=True)
+
+
+@app.route('/gastos/semana')
+def gastos_semana():
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+
+    today = datetime.date.today()
+    start_of_week = today - datetime.timedelta(days=today.weekday())
+    end_of_week = start_of_week + datetime.timedelta(days=6)
+    start_previous = start_of_week - datetime.timedelta(days=7)
+    end_previous = start_of_week - datetime.timedelta(days=1)
+
+    p = get_placeholder()
+    cur.execute('SELECT dolar FROM config WHERE id = 1')
+    row_dolar = cur.fetchone()
+    dolar = row_dolar['dolar'] if row_dolar else 1.0
+
+    cur.execute(
+        f'SELECT * FROM gastos WHERE fecha >= {p} AND fecha <= {p} ORDER BY fecha DESC',
+        (start_of_week.isoformat(), end_of_week.isoformat())
+    )
+    gastos_actual = cur.fetchall()
+
+    cur.execute(
+        f'SELECT * FROM gastos WHERE fecha >= {p} AND fecha <= {p} ORDER BY fecha DESC',
+        (start_previous.isoformat(), end_previous.isoformat())
+    )
+    gastos_previos = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    labels = ['Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab', 'Dom']
+    data_pen = [0.0] * 7
+    data_usd = [0.0] * 7
+    data_previous_pen = [0.0] * 7
+    data_previous_usd = [0.0] * 7
+
+    for g in gastos_actual:
+        d = coerce_date(g['fecha'])
+        if d is None:
+            continue
+        i = d.weekday()
+        cost = float(g['costo'] or 0)
+        data_pen[i] += cost
+        data_usd[i] += (cost / dolar) if dolar else 0.0
+
+    for g in gastos_previos:
+        d = coerce_date(g['fecha'])
+        if d is None:
+            continue
+        i = d.weekday()
+        cost = float(g['costo'] or 0)
+        data_previous_pen[i] += cost
+        data_previous_usd[i] += (cost / dolar) if dolar else 0.0
+
+    total_semana = sum(float(g['costo'] or 0) for g in gastos_actual)
+    total_previous = sum(float(g['costo'] or 0) for g in gastos_previos)
+
+    return render_template(
+        'gastos_semana.html',
+        gastos=gastos_actual,
+        labels=labels,
+        data_pen=data_pen,
+        data_usd=data_usd,
+        data_previous_pen=data_previous_pen,
+        data_previous_usd=data_previous_usd,
+        start_of_week=start_of_week.strftime('%Y-%m-%d'),
+        end_of_week=end_of_week.strftime('%Y-%m-%d'),
+        start_previous=start_previous.strftime('%Y-%m-%d'),
+        end_previous=end_previous.strftime('%Y-%m-%d'),
+        total_semana=total_semana,
+        total_semana_usd=(total_semana / dolar) if dolar else 0.0,
+        total_previous=total_previous,
+        total_previous_usd=(total_previous / dolar) if dolar else 0.0,
+    )
+
+
+@app.route('/gastos/mes')
+def gastos_mes():
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+
+    today = datetime.date.today()
+    start_of_month = today.replace(day=1)
+    if start_of_month.month == 12:
+        next_month = datetime.date(start_of_month.year + 1, 1, 1)
+    else:
+        next_month = datetime.date(start_of_month.year, start_of_month.month + 1, 1)
+
+    p = get_placeholder()
+    cur.execute('SELECT dolar FROM config WHERE id = 1')
+    row_dolar = cur.fetchone()
+    dolar = row_dolar['dolar'] if row_dolar else 1.0
+
+    cur.execute(
+        f'SELECT * FROM gastos WHERE fecha >= {p} AND fecha < {p} ORDER BY fecha DESC',
+        (start_of_month.isoformat(), next_month.isoformat())
+    )
+    gastos_list = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    last_day = calendar.monthrange(start_of_month.year, start_of_month.month)[1]
+    labels = [str(day) for day in range(1, last_day + 1)]
+    data_pen = [0.0] * last_day
+    data_usd = [0.0] * last_day
+
+    for g in gastos_list:
+        d = coerce_date(g['fecha'])
+        if d is None:
+            continue
+        idx = d.day - 1
+        cost = float(g['costo'] or 0)
+        data_pen[idx] += cost
+        data_usd[idx] += (cost / dolar) if dolar else 0.0
+
+    total_mes = sum(float(g['costo'] or 0) for g in gastos_list)
+
+    return render_template(
+        'gastos_mes.html',
+        gastos=gastos_list,
+        labels=labels,
+        data_pen=data_pen,
+        data_usd=data_usd,
+        total_mes=total_mes,
+        total_mes_usd=(total_mes / dolar) if dolar else 0.0,
+        start_of_month=start_of_month,
+    )
+
+
+@app.route('/gastos/<int:gasto_id>/edit', methods=['GET', 'POST'])
+def edit_gasto(gasto_id):
+    if 'admin' not in session:
+        return redirect(url_for('gastos'))
+
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+
+    if request.method == 'POST':
+        cur.execute(
+            f'UPDATE gastos SET fecha={p}, nombre_gasto={p}, descripcion={p}, categoria={p}, costo={p}, monto={p} WHERE id={p}',
+            (
+                request.form.get('fecha'),
+                request.form.get('nombre_gasto'),
+                request.form.get('descripcion'),
+                request.form.get('categoria'),
+                float(request.form.get('costo')),
+                float(request.form.get('costo')),
+                gasto_id,
+            ),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return redirect(url_for('gastos'))
+
+    cur.execute(f'SELECT * FROM gastos WHERE id={p}', (gasto_id,))
+    gasto = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not gasto:
+        return redirect(url_for('gastos'))
+
+    return render_template('edit_gasto.html', gasto=gasto, error=None)
 
 if __name__ == '__main__':
     init_db()
