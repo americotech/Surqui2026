@@ -1,10 +1,12 @@
 import os
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor  # <--- Asegúrate de que esta línea esté clara
 import datetime
 import calendar
 from collections import defaultdict
 from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory
 import openpyxl
+
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'supersecretkey')
@@ -144,14 +146,28 @@ def logout():
     return redirect(url_for('index'))
 
 @app.route('/')
+@app.route('/')
 def index():
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute('SELECT * FROM departamentos ORDER BY id ASC')
-    deps = cur.fetchall()
-    cur.execute('SELECT dolar FROM config WHERE id = 1')
-    row = cur.fetchone()
+    # Usamos RealDictCursor para que los datos lleguen como diccionario a tu HTML
+    cur = conn.cursor(cursor_factory=RealDictCursor) 
+    
+    try:
+        cur.execute('SELECT * FROM departamentos ORDER BY id ASC')
+        deps = cur.fetchall()
+        
+        cur.execute('SELECT dolar FROM config WHERE id = 1')
+        row = cur.fetchone()
+    except Exception as e:
+        print(f"Error en la consulta: {e}")
+        deps = []
+        row = None
+    finally:
+        cur.close()
+        conn.close()
+
     dolar = row['dolar'] if row else 1.0
+    # ... resto de tu lógica de cálculos ...
     
     total_ingreso_neto = sum(dep['ingreso_neto'] or 0 for dep in deps)
     total_ingreso_dolares = total_ingreso_neto / dolar if dolar else 0.0
