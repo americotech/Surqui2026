@@ -1,6 +1,5 @@
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import sqlite3
 import datetime
 import calendar
 from collections import defaultdict
@@ -11,15 +10,24 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'supersecretkey')
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 
-# --- CONEXIÓN A SUPABASE ---
+# --- CONEXIÓN A BASE DE DATOS ---
 def get_db_connection():
-    # Render te da esta URL automáticamente desde las Variables de Entorno
     database_url = os.environ.get('DATABASE_URL')
-    if not database_url:
-        raise ValueError("Error: No se encontró DATABASE_URL en las variables de entorno.")
-    
-    conn = psycopg2.connect(database_url, sslmode='require')
-    return conn
+    if database_url:
+        # Producción: PostgreSQL
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        conn = psycopg2.connect(database_url, sslmode='require')
+        return conn
+    else:
+        # Local: SQLite
+        DATABASE = os.path.join(app.root_path, 'gestion.db')
+        conn = sqlite3.connect(DATABASE)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+def get_placeholder():
+    return '%s' if 'DATABASE_URL' in os.environ else '?'
 
 # --- CARGA DE EXCEL (Sin cambios) ---
 def load_tributos_rows():
@@ -44,47 +52,74 @@ def load_tributos_rows():
             rows.append(row_data)
     return rows
 
-# --- INICIALIZACIÓN DE BASE DE DATOS (Sintaxis PostgreSQL) ---
+# --- INICIALIZACIÓN DE BASE DE DATOS ---
 def init_db():
     conn = get_db_connection()
+    is_postgres = 'DATABASE_URL' in os.environ
     cur = conn.cursor()
     
-    # Tabla Departamentos
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS departamentos (
-            id SERIAL PRIMARY KEY,
-            nombre TEXT NOT NULL,
-            porcentaje REAL DEFAULT 30.0,
-            renta REAL DEFAULT 0.0,
-            costo_administrativo REAL DEFAULT 0.0,
-            ingreso_neto REAL DEFAULT 0.0
-        )
-    ''')
-
-    # Tabla Config
-    cur.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, dolar REAL)')
-    cur.execute('INSERT INTO config (id, dolar) VALUES (1, 3.4) ON CONFLICT (id) DO NOTHING')
-
-    # Tabla Gastos
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS gastos (
-            id SERIAL PRIMARY KEY,
-            fecha DATE DEFAULT CURRENT_DATE,
-            nombre_gasto TEXT NOT NULL,
-            descripcion TEXT,
-            categoria TEXT DEFAULT 'Otros',
-            costo REAL NOT NULL,
-            monto REAL DEFAULT 0.0
-        )
-    ''')
-
+    if is_postgres:
+        # Sintaxis PostgreSQL
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS departamentos (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                porcentaje REAL DEFAULT 30.0,
+                renta REAL DEFAULT 0.0,
+                costo_administrativo REAL DEFAULT 0.0,
+                ingreso_neto REAL DEFAULT 0.0
+            )
+        ''')
+        cur.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, dolar REAL)')
+        cur.execute('INSERT INTO config (id, dolar) VALUES (1, 3.4) ON CONFLICT (id) DO NOTHING')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS gastos (
+                id SERIAL PRIMARY KEY,
+                fecha DATE DEFAULT CURRENT_DATE,
+                nombre_gasto TEXT NOT NULL,
+                descripcion TEXT,
+                categoria TEXT DEFAULT 'Otros',
+                costo REAL NOT NULL,
+                monto REAL DEFAULT 0.0
+            )
+        ''')
+        placeholder = '%s'
+        date_default = 'CURRENT_DATE'
+    else:
+        # Sintaxis SQLite
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS departamentos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                porcentaje REAL DEFAULT 30.0,
+                renta REAL DEFAULT 0.0,
+                costo_administrativo REAL DEFAULT 0.0,
+                ingreso_neto REAL DEFAULT 0.0
+            )
+        ''')
+        cur.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, dolar REAL)')
+        cur.execute('INSERT OR IGNORE INTO config (id, dolar) VALUES (1, 3.4)')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS gastos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha DATE DEFAULT (date('now')),
+                nombre_gasto TEXT NOT NULL,
+                descripcion TEXT,
+                categoria TEXT DEFAULT 'Otros',
+                costo REAL NOT NULL,
+                monto REAL DEFAULT 0.0
+            )
+        ''')
+        placeholder = '?'
+        date_default = "date('now')"
+    
     # Datos iniciales
     cur.execute('SELECT count(*) FROM departamentos')
     if cur.fetchone()[0] == 0:
         deps = ['1er Piso', '3A', '3B', '4A', '4B', '4C', '5A', '2P_SJM']
         for dep in deps:
             cur.execute(
-                'INSERT INTO departamentos (nombre, porcentaje, renta, costo_administrativo, ingreso_neto) VALUES (%s, %s, %s, %s, %s)',
+                f'INSERT INTO departamentos (nombre, porcentaje, renta, costo_administrativo, ingreso_neto) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})',
                 (dep, 30.0, 1000.0, 300.0, 700.0)
             )
     
@@ -153,13 +188,14 @@ def add_gasto():
     if request.method == 'POST':
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute('INSERT INTO gastos (fecha, nombre_gasto, descripcion, categoria, costo, monto) VALUES (%s, %s, %s, %s, %s, %s)',
+        cur.execute(f'INSERT INTO gastos (fecha, nombre_gasto, descripcion, categoria, costo, monto) VALUES ({get_placeholder()}, {get_placeholder()}, {get_placeholder()}, {get_placeholder()}, {get_placeholder()}, {get_placeholder()})',
                     (request.form.get('fecha'), request.form.get('nombre_gasto'), request.form.get('descripcion'), request.form.get('categoria'), float(request.form.get('costo')), float(request.form.get('costo'))))
         conn.commit()
         cur.close()
         conn.close()
         return redirect(url_for('gastos'))
     return render_template('add_gasto.html', fecha_default=datetime.date.today().isoformat())
+
 
 @app.route('/update', methods=['POST'])
 def update():
@@ -170,14 +206,17 @@ def update():
     # Update Dólar
     nuevo_dolar = request.form.get('precio_dolar')
     if nuevo_dolar:
-        cur.execute('INSERT INTO config (id, dolar) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET dolar = EXCLUDED.dolar', (float(nuevo_dolar),))
+        if 'DATABASE_URL' in os.environ:
+            cur.execute(f'INSERT INTO config (id, dolar) VALUES (1, {get_placeholder()}) ON CONFLICT (id) DO UPDATE SET dolar = EXCLUDED.dolar', (float(nuevo_dolar),))
+        else:
+            cur.execute(f'INSERT OR REPLACE INTO config (id, dolar) VALUES (1, {get_placeholder()})', (float(nuevo_dolar),))
     
     # Update Departamentos
     for dep_id in request.form.getlist('id'):
         p = float(request.form.get(f'porcentaje_{dep_id}'))
         r = float(request.form.get(f'renta_{dep_id}'))
         costo_adm = r * (p / 100)
-        cur.execute('UPDATE departamentos SET porcentaje=%s, renta=%s, costo_administrativo=%s, ingreso_neto=%s WHERE id=%s',
+        cur.execute(f'UPDATE departamentos SET porcentaje={get_placeholder()}, renta={get_placeholder()}, costo_administrativo={get_placeholder()}, ingreso_neto={get_placeholder()} WHERE id={get_placeholder()}',
                     (p, r, costo_adm, r - costo_adm, int(dep_id)))
     
     conn.commit()
