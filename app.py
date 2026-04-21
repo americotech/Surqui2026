@@ -565,6 +565,8 @@ def edit_gasto(gasto_id):
 def tributos_sjm():
     return render_template('tributos_sjm.html')
 
+# Run init_db at module load so gunicorn (Render) also initialises the DB
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     app.run(debug=True)
