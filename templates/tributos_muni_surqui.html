@@ -20,9 +20,14 @@
         </div>
 
         <div class="card shadow-sm mb-4">
-            <div class="card-body">
-                <p>Descarga el cronograma original aquí:</p>
-                <a href="{{ url_for('download_cronograma') }}" class="btn btn-outline-primary">Cronograma de pagos 2026.xlsx</a>
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div>
+                    <p class="mb-0">Descarga el cronograma original aquí:</p>
+                    <a href="{{ url_for('download_cronograma') }}" class="btn btn-outline-primary btn-sm mt-1">Cronograma de pagos 2026.xlsx</a>
+                </div>
+                {% if editable %}
+                <a href="{{ url_for('add_cronograma') }}" class="btn btn-success">+ Agregar entrada</a>
+                {% endif %}
             </div>
         </div>
 
@@ -43,28 +48,37 @@
                                     <th>Concepto</th>
                                     <th>Monto total a pagar (S/.)</th>
                                     <th>Estado</th>
+                                    {% if editable %}<th>Acciones</th>{% endif %}
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for row in rows %}
-                                <tr class="{% if row.Estado == 'Pagado' %}table-success{% endif %}">
-                                    <td>{{ row.Item }}</td>
-                                    <td>{{ row['Fecha de vencimiento'] }}</td>
-                                    <td>{{ row.Concepto }}</td>
-                                    <td>{{ '%.2f'|format(row.Monto or 0) }}</td>
+                                <tr class="{% if row['estado'] == 'Pagado' %}table-success{% endif %}">
+                                    <td>{{ row['item'] }}</td>
+                                    <td>{{ row['fecha_vencimiento'] }}</td>
+                                    <td>{{ row['concepto'] }}</td>
+                                    <td>{{ '%.2f'|format(row['monto'] or 0) }}</td>
                                     <td>
                                         {% if editable %}
-                                        <select name="status_{{ row.key }}" class="form-select">
-                                            <option value="" {% if row.Estado == '' %}selected{% endif %}>Seleccionar</option>
-                                            <option value="Pagado" {% if row.Estado == 'Pagado' %}selected{% endif %}>Pagado</option>
-                                            <option value="Pendiente" {% if row.Estado == 'Pendiente' %}selected{% endif %}>Pendiente</option>
+                                        <select name="status_{{ row['id'] }}" class="form-select form-select-sm">
+                                            <option value="" {% if not row['estado'] %}selected{% endif %}>Seleccionar</option>
+                                            <option value="Pagado" {% if row['estado'] == 'Pagado' %}selected{% endif %}>Pagado</option>
+                                            <option value="Pendiente" {% if row['estado'] == 'Pendiente' %}selected{% endif %}>Pendiente</option>
                                         </select>
                                         {% else %}
-                                        <span class="badge bg-{{ 'success' if row.Estado == 'Pagado' else 'warning' if row.Estado == 'Pendiente' else 'secondary' }}">
-                                            {{ row.Estado or 'Sin estado' }}
+                                        <span class="badge bg-{{ 'success' if row['estado'] == 'Pagado' else 'warning' if row['estado'] == 'Pendiente' else 'secondary' }}">
+                                            {{ row['estado'] or 'Sin estado' }}
                                         </span>
                                         {% endif %}
                                     </td>
+                                    {% if editable %}
+                                    <td>
+                                        <a href="{{ url_for('edit_cronograma', entry_id=row['id']) }}" class="btn btn-sm btn-warning me-1">Editar</a>
+                                        <form method="post" action="{{ url_for('delete_cronograma', entry_id=row['id']) }}" class="d-inline" onsubmit="return confirm('¿Eliminar esta entrada?')">
+                                            <button type="submit" class="btn btn-sm btn-danger">Eliminar</button>
+                                        </form>
+                                    </td>
+                                    {% endif %}
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -83,7 +97,6 @@
                 {% if editable %}
                 </form>
                 {% endif %}
-                <p class="mt-3 text-muted">Los cambios se guardan en la sesión del navegador y se mantendrán mientras la sesión esté activa.</p>
             </div>
         </div>
     </div>

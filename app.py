@@ -66,6 +66,10 @@ def load_tributos_rows():
         if idx > 3:
             if not any(row): continue
             row_data = dict(zip(headers, row))
+            # Normalizar columna de monto al nombre esperado por el template
+            monto_key = next((h for h in row_data if 'monto' in h.lower()), None)
+            if monto_key and monto_key != 'Monto':
+                row_data['Monto'] = row_data.get(monto_key)
             key = str(row_data.get('Item') or idx)
             row_data['key'] = key
             rows.append(row_data)
@@ -102,6 +106,16 @@ def init_db():
                 monto REAL DEFAULT 0.0
             )
         ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS cronograma_pagos (
+                id SERIAL PRIMARY KEY,
+                item INTEGER,
+                fecha_vencimiento TEXT,
+                concepto TEXT NOT NULL,
+                monto REAL DEFAULT 0.0,
+                estado TEXT DEFAULT ''
+            )
+        ''')
         placeholder = '%s'
         date_default = 'CURRENT_DATE'
     else:
@@ -129,6 +143,16 @@ def init_db():
                 monto REAL DEFAULT 0.0
             )
         ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS cronograma_pagos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item INTEGER,
+                fecha_vencimiento TEXT,
+                concepto TEXT NOT NULL,
+                monto REAL DEFAULT 0.0,
+                estado TEXT DEFAULT ''
+            )
+        ''')
         placeholder = '?'
         date_default = "date('now')"
     
@@ -142,6 +166,29 @@ def init_db():
                 (dep, 30.0, 1000.0, 300.0, 700.0)
             )
     
+    # Seed cronograma_pagos if empty
+    cur.execute('SELECT count(*) FROM cronograma_pagos')
+    if cur.fetchone()[0] == 0:
+        seed_cronograma = [
+            (1,  '27 de marzo',              'Predial Cuota 01',                         637.00,   ''),
+            (2,  '27 de marzo',              'Arbitrios Bimestre 01 (3 predios)',         464.23,   ''),
+            (3,  '27 de marzo',              'Arbitrios + Predial',                       1101.23,  'Pagado'),
+            (4,  '30 de abril de 2026',      'Arbitrios Bimestre 02 (3 predios)',         425.54,   'Pendiente'),
+            (5,  '29 de mayo de 2026',       'Predial Cuota 02',                          627.33,   'Pendiente'),
+            (6,  '30 de junio de 2026',      'Arbitrios Bimestre 03 (3 predios)',         425.54,   'Pendiente'),
+            (7,  '31 de agosto de 2026',     'Arbitrios Bimestre 04 (3 predios)',         425.54,   ''),
+            (8,  '31 de agosto de 2026',     'Predial Cuota 03',                          627.33,   ''),
+            (9,  'Total 31 ago',             '(Arbitrios + Predial)',                     1052.87,  'Pendiente'),
+            (10, '30 de octubre de 2026',    'Arbitrios Bimestre 05 (3 predios)',         425.54,   'Pendiente'),
+            (11, '30 de noviembre de 2026',  'Predial Cuota 04',                          627.33,   'Pendiente'),
+            (12, '31 de diciembre de 2026',  'Arbitrios Bimestre 06 (3 predios)',         425.54,   'Pendiente'),
+        ]
+        for s in seed_cronograma:
+            cur.execute(
+                f'INSERT INTO cronograma_pagos (item, fecha_vencimiento, concepto, monto, estado) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})',
+                s
+            )
+
     conn.commit()
     cur.close()
     conn.close()
@@ -257,25 +304,87 @@ def update():
 
 @app.route('/tributos', methods=['GET', 'POST'])
 def tributos():
-    rows = load_tributos_rows()
-    status_map = session.get('tributos_status', {})
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
 
     if request.method == 'POST' and 'admin' in session:
-        for row in rows:
-            key = row.get('key')
-            selected = request.form.get(f'status_{key}', '')
-            if selected:
-                status_map[str(key)] = selected
-            else:
-                status_map.pop(str(key), None)
-        session['tributos_status'] = status_map
+        cur.execute('SELECT id FROM cronograma_pagos')
+        ids = [r['id'] for r in cur.fetchall()]
+        for row_id in ids:
+            selected = request.form.get(f'status_{row_id}', '')
+            cur.execute(f'UPDATE cronograma_pagos SET estado={p} WHERE id={p}', (selected, row_id))
+        conn.commit()
 
-    for row in rows:
-        key = str(row.get('key'))
-        if key in status_map:
-            row['Estado'] = status_map[key]
-
+    cur.execute('SELECT * FROM cronograma_pagos ORDER BY item ASC, id ASC')
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
     return render_template('tributos_muni_surqui.html', rows=rows, editable='admin' in session)
+
+
+@app.route('/tributos/add', methods=['GET', 'POST'])
+def add_cronograma():
+    if 'admin' not in session:
+        return redirect(url_for('tributos'))
+    if request.method == 'POST':
+        conn = get_db_connection()
+        cur = conn.cursor()
+        p = get_placeholder()
+        item_val = request.form.get('item')
+        item_val = int(item_val) if item_val else None
+        cur.execute(
+            f'INSERT INTO cronograma_pagos (item, fecha_vencimiento, concepto, monto, estado) VALUES ({p}, {p}, {p}, {p}, {p})',
+            (item_val, request.form.get('fecha_vencimiento'), request.form.get('concepto'),
+             float(request.form.get('monto', 0)), request.form.get('estado', ''))
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return redirect(url_for('tributos'))
+    return render_template('add_cronograma.html')
+
+
+@app.route('/tributos/<int:entry_id>/edit', methods=['GET', 'POST'])
+def edit_cronograma(entry_id):
+    if 'admin' not in session:
+        return redirect(url_for('tributos'))
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+    if request.method == 'POST':
+        item_val = request.form.get('item')
+        item_val = int(item_val) if item_val else None
+        cur.execute(
+            f'UPDATE cronograma_pagos SET item={p}, fecha_vencimiento={p}, concepto={p}, monto={p}, estado={p} WHERE id={p}',
+            (item_val, request.form.get('fecha_vencimiento'), request.form.get('concepto'),
+             float(request.form.get('monto', 0)), request.form.get('estado', ''), entry_id)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return redirect(url_for('tributos'))
+    cur.execute(f'SELECT * FROM cronograma_pagos WHERE id={p}', (entry_id,))
+    entry = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not entry:
+        return redirect(url_for('tributos'))
+    return render_template('edit_cronograma.html', entry=entry)
+
+
+@app.route('/tributos/<int:entry_id>/delete', methods=['POST'])
+def delete_cronograma(entry_id):
+    if 'admin' not in session:
+        return redirect(url_for('tributos'))
+    conn = get_db_connection()
+    cur = conn.cursor()
+    p = get_placeholder()
+    cur.execute(f'DELETE FROM cronograma_pagos WHERE id={p}', (entry_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return redirect(url_for('tributos'))
 
 
 @app.route('/download/cronograma')
@@ -451,6 +560,10 @@ def edit_gasto(gasto_id):
         return redirect(url_for('gastos'))
 
     return render_template('edit_gasto.html', gasto=gasto, error=None)
+
+@app.route('/tributos-sjm')
+def tributos_sjm():
+    return render_template('tributos_sjm.html')
 
 if __name__ == '__main__':
     init_db()
