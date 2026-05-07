@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestion de Usuarios</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container py-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="mb-0">Gestion de Usuarios</h2>
+            <div>
+                <a href="{{ url_for('index') }}" class="btn btn-outline-secondary me-2">Volver al panel</a>
+                <a href="{{ url_for('logout') }}" class="btn btn-secondary">Cerrar sesion</a>
+            </div>
+        </div>
+
+        {% if message %}
+        <div class="alert alert-success">{{ message }}</div>
+        {% endif %}
+        {% if error %}
+        <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <div class="card mb-4">
+            <div class="card-header fw-bold">Crear Usuario</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('add_user') }}" class="row g-3">
+                    <div class="col-md-4">
+                        <label for="username" class="form-label">Usuario</label>
+                        <input type="text" id="username" name="username" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="password" class="form-label">Clave</label>
+                        <input type="password" id="password" name="password" class="form-control" minlength="6" required>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="role" class="form-label">Rol</label>
+                        <select id="role" name="role" class="form-select">
+                            <option value="user" selected>Usuario</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 d-grid">
+                        <label class="form-label">&nbsp;</label>
+                        <button type="submit" class="btn btn-primary">Crear</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header fw-bold">Usuarios Registrados</div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>ID</th>
+                                <th>Usuario</th>
+                                <th>Rol</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for user in users %}
+                            <tr>
+                                <td>{{ user.id }}</td>
+                                <td>
+                                    {{ user.username }}
+                                    {% if user.id == current_user_id %}
+                                    <span class="badge bg-info text-dark">Tu sesion</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <form method="POST" action="{{ url_for('update_user_role', user_id=user.id) }}" class="d-flex gap-2">
+                                        <select name="role" class="form-select form-select-sm" style="max-width: 140px;" {% if user.id == current_user_id and user.role == 'admin' %}disabled{% endif %}>
+                                            <option value="user" {% if user.role == 'user' %}selected{% endif %}>Usuario</option>
+                                            <option value="admin" {% if user.role == 'admin' %}selected{% endif %}>Admin</option>
+                                        </select>
+                                        <button type="submit" class="btn btn-sm btn-outline-primary" {% if user.id == current_user_id and user.role == 'admin' %}disabled{% endif %}>Guardar</button>
+                                    </form>
+                                </td>
+                                <td>
+                                    {% if user.is_active %}
+                                    <span class="badge bg-success">Activo</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Inactivo</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <form method="POST" action="{{ url_for('toggle_user_status', user_id=user.id) }}">
+                                            <button type="submit" class="btn btn-sm {% if user.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}" {% if user.id == current_user_id %}disabled{% endif %}>
+                                                {% if user.is_active %}Desactivar{% else %}Activar{% endif %}
+                                            </button>
+                                        </form>
+
+                                        <form method="POST" action="{{ url_for('update_user_password', user_id=user.id) }}" class="d-flex gap-2">
+                                            <input type="password" name="new_password" class="form-control form-control-sm" placeholder="Nueva clave" minlength="6" required style="max-width: 150px;">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">Cambiar clave</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center py-4">No hay usuarios registrados.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -2,22 +2,92 @@ import os
 import sqlite3
 import datetime
 import calendar
-from collections import defaultdict
+import importlib
+from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory
-import openpyxl
+from werkzeug.security import generate_password_hash, check_password_hash
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)  # Carga .env y sobreescribe vars del sistema
+except ModuleNotFoundError:
+    pass
 
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'supersecretkey')
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 
+
+def is_authenticated():
+    return bool(session.get('user_id'))
+
+
+def is_admin():
+    return session.get('role') == 'admin'
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped_view(*args, **kwargs):
+        if not is_authenticated():
+            return redirect(url_for('login', next=request.path))
+        if not is_admin():
+            return redirect(url_for('index'))
+        return view(*args, **kwargs)
+
+    return wrapped_view
+
+
+def admin_redirect(redirect_endpoint='index'):
+    """Decorator to check admin permissions and redirect if not authorized."""
+    def decorator(view):
+        @wraps(view)
+        def wrapped_view(*args, **kwargs):
+            if not is_admin():
+                return redirect(url_for(redirect_endpoint))
+            return view(*args, **kwargs)
+        return wrapped_view
+    return decorator
+
+
+@app.before_request
+def require_login_for_app():
+    public_endpoints = {'login', 'static'}
+    if request.endpoint in public_endpoints:
+        return
+    if not is_authenticated():
+        return redirect(url_for('login', next=request.path))
+
+
+def get_database_url():
+    # Support common env names used across local runs and migration scripts.
+    return (
+        os.environ.get('DATABASE_URL')
+        or os.environ.get('NEON_DATABASE_URL')
+        or os.environ.get('TARGET_DATABASE_URL')
+    )
+
+
+def get_postgres_driver():
+    try:
+        psycopg2 = importlib.import_module('psycopg2')
+        return 'psycopg2', psycopg2
+    except ModuleNotFoundError:
+        psycopg = importlib.import_module('psycopg')
+        return 'psycopg', psycopg
+
+
 # --- CONEXIÓN A BASE DE DATOS ---
 def get_db_connection():
-    database_url = os.environ.get('DATABASE_URL')
+    database_url = get_database_url()
     if database_url:
         # Producción: PostgreSQL
-        import psycopg2
-        conn = psycopg2.connect(database_url, sslmode='require')
+        driver_name, driver = get_postgres_driver()
+        if driver_name == 'psycopg2':
+            conn = driver.connect(database_url, sslmode='require')
+        else:
+            conn = driver.connect(database_url)
         return conn
     else:
         # Local: SQLite
@@ -26,19 +96,33 @@ def get_db_connection():
         conn.row_factory = sqlite3.Row
         return conn
 
-def get_cursor_factory():
-    if 'DATABASE_URL' in os.environ:
-        from psycopg2.extras import RealDictCursor
-        return RealDictCursor
-    return None
-
 def get_placeholder():
-    return '%s' if 'DATABASE_URL' in os.environ else '?'
+    return '%s' if get_database_url() else '?'
 
 
 def get_cursor(conn):
-    cursor_factory = get_cursor_factory()
-    return conn.cursor(cursor_factory=cursor_factory) if cursor_factory else conn.cursor()
+    if get_database_url():
+        driver_name, _ = get_postgres_driver()
+        if driver_name == 'psycopg2':
+            extras = importlib.import_module('psycopg2.extras')
+            return conn.cursor(cursor_factory=extras.RealDictCursor)
+        rows = importlib.import_module('psycopg.rows')
+        return conn.cursor(row_factory=rows.dict_row)
+    return conn.cursor()
+
+
+def get_active_value():
+    """Get database-specific boolean representation for is_active column."""
+    return True if get_database_url() else 1
+
+
+def count_active_admins(cur):
+    """Count active admin users in the database."""
+    p = get_placeholder()
+    cur.execute(f'SELECT COUNT(*) AS total FROM users WHERE role={p} AND is_active={p}', 
+                ('admin', get_active_value()))
+    result = cur.fetchone()
+    return result['total'] if result else 0
 
 
 def coerce_date(value):
@@ -48,51 +132,88 @@ def coerce_date(value):
         return datetime.date.fromisoformat(value[:10])
     return None
 
-# --- CARGA DE EXCEL (Sin cambios) ---
-def load_tributos_rows():
-    excel_path = os.path.join(app.root_path, 'Cronograma de pagos 2026.xlsx')
-    rows = []
-    if not os.path.exists(excel_path):
-        return rows
-    wb = openpyxl.load_workbook(excel_path, data_only=True)
-    ws = wb.active
-    headers = []
-    for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-        if idx == 1: continue
-        if idx == 3:
-            raw_headers = [cell if cell is not None else '' for cell in row]
-            headers = [h if h else '' for h in raw_headers]
-            continue
-        if idx > 3:
-            if not any(row): continue
-            row_data = dict(zip(headers, row))
-            # Normalizar columna de monto al nombre esperado por el template
-            monto_key = next((h for h in row_data if 'monto' in h.lower()), None)
-            if monto_key and monto_key != 'Monto':
-                row_data['Monto'] = row_data.get(monto_key)
-            key = str(row_data.get('Item') or idx)
-            row_data['key'] = key
-            rows.append(row_data)
-    return rows
+
+def db_is_active(value):
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 't', 'yes', 'y'}
+    return bool(value)
+
+
+def shift_month(date_value, months):
+    month_index = (date_value.month - 1) + months
+    year = date_value.year + (month_index // 12)
+    month = (month_index % 12) + 1
+    day = min(date_value.day, calendar.monthrange(year, month)[1])
+    return datetime.date(year, month, day)
+
+
+def get_dolar_rate(conn, cur):
+    """Get current dollar exchange rate from config."""
+    cur.execute('SELECT dolar FROM config WHERE id = 1')
+    row = cur.fetchone()
+    return row['dolar'] if row else 1.0
+
+
+def format_spanish_date(date_value):
+    return f'{date_value.day} de {MESES_ES[date_value.month - 1]} de {date_value.year}'
+
+
+def format_spanish_datetime(date_value):
+    """Format a date as 'lunes, 15 de enero de 2026'."""
+    return f"{DIAS_ES[date_value.weekday()]}, {date_value.day} de {MESES_ES[date_value.month - 1]} de {date_value.year}"
+
+
+def to_float(value, default=0.0):
+    try:
+        if value is None or value == '':
+            return float(default)
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def normalize_percentage(value, default=30.0):
+    return max(0.0, min(to_float(value, default), 100.0))
+
+
+def ensure_inmuebles_porcentaje_column(conn, cur):
+    default_percentage = 30.0
+    if get_database_url():
+        cur.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'inmuebles' AND column_name = 'porcentaje'
+            """
+        )
+        if not cur.fetchone():
+            cur.execute(
+                'ALTER TABLE inmuebles ADD COLUMN porcentaje REAL DEFAULT 30.0'
+            )
+            conn.commit()
+        cur.execute('UPDATE inmuebles SET porcentaje = %s WHERE porcentaje IS NULL', (default_percentage,))
+    else:
+        cur.execute('PRAGMA table_info(inmuebles)')
+        columns = {row[1] for row in cur.fetchall()}
+        if 'porcentaje' not in columns:
+            cur.execute('ALTER TABLE inmuebles ADD COLUMN porcentaje REAL DEFAULT 30.0')
+            conn.commit()
+        cur.execute('UPDATE inmuebles SET porcentaje = ? WHERE porcentaje IS NULL', (default_percentage,))
+
+
+MESES_ES = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+]
+DIAS_ES = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo']
 
 # --- INICIALIZACIÓN DE BASE DE DATOS ---
 def init_db():
     conn = get_db_connection()
-    is_postgres = 'DATABASE_URL' in os.environ
+    is_postgres = bool(get_database_url())
     cur = conn.cursor()
-    
     if is_postgres:
         # Sintaxis PostgreSQL
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS departamentos (
-                id SERIAL PRIMARY KEY,
-                nombre TEXT NOT NULL,
-                porcentaje REAL DEFAULT 30.0,
-                renta REAL DEFAULT 0.0,
-                costo_administrativo REAL DEFAULT 0.0,
-                ingreso_neto REAL DEFAULT 0.0
-            )
-        ''')
         cur.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, dolar REAL)')
         cur.execute('INSERT INTO config (id, dolar) VALUES (1, 3.4) ON CONFLICT (id) DO NOTHING')
         cur.execute('''
@@ -116,20 +237,85 @@ def init_db():
                 estado TEXT DEFAULT ''
             )
         ''')
-        placeholder = '%s'
-        date_default = 'CURRENT_DATE'
-    else:
-        # Sintaxis SQLite
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS departamentos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nombre TEXT NOT NULL,
-                porcentaje REAL DEFAULT 30.0,
-                renta REAL DEFAULT 0.0,
-                costo_administrativo REAL DEFAULT 0.0,
-                ingreso_neto REAL DEFAULT 0.0
+            CREATE TABLE IF NOT EXISTS gestor_cobranzas (
+                id SERIAL PRIMARY KEY,
+                inmueble TEXT NOT NULL,
+                inquilino TEXT,
+                periodo TEXT NOT NULL,
+                vencimiento DATE,
+                monto REAL NOT NULL DEFAULT 0.0,
+                monto_pagado REAL NOT NULL DEFAULT 0.0,
+                estado TEXT DEFAULT 'Pendiente',
+                fecha_pago DATE,
+                observacion TEXT
             )
         ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS inmuebles (
+                id SERIAL PRIMARY KEY,
+                codigo TEXT NOT NULL UNIQUE,
+                descripcion TEXT,
+                direccion TEXT,
+                tipo TEXT DEFAULT 'Departamento',
+                estado TEXT DEFAULT 'Disponible',
+                monto_renta REAL DEFAULT 0.0,
+                porcentaje REAL DEFAULT 30.0
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS inquilinos (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                dni TEXT,
+                telefono TEXT,
+                email TEXT,
+                direccion_anterior TEXT,
+                observacion TEXT
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS contratos (
+                id SERIAL PRIMARY KEY,
+                inmueble_id INTEGER REFERENCES inmuebles(id),
+                inquilino_id INTEGER REFERENCES inquilinos(id),
+                fecha_inicio DATE NOT NULL,
+                fecha_fin DATE,
+                monto_mensual REAL NOT NULL DEFAULT 0.0,
+                dia_pago INTEGER DEFAULT 1,
+                estado TEXT DEFAULT 'Activo',
+                observacion TEXT
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                is_active BOOLEAN NOT NULL DEFAULT TRUE
+            )
+        ''')
+        # Migrar porcentajes personalizados de departamentos -> inmuebles antes de eliminar la tabla
+        cur.execute("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'departamentos'
+        """)
+        if cur.fetchone():
+            cur.execute('SELECT nombre, porcentaje FROM departamentos')
+            for dep_nombre, dep_pct in cur.fetchall():
+                if dep_pct is None:
+                    continue
+                # Match exacto por codigo, o por nombre contenido en codigo (ej: '3A' -> '3A')
+                cur.execute(
+                    'UPDATE inmuebles SET porcentaje = %s WHERE LOWER(codigo) = LOWER(%s) AND porcentaje IS NOT DISTINCT FROM 30.0',
+                    (float(dep_pct), str(dep_nombre))
+                )
+            conn.commit()
+        cur.execute('DROP TABLE IF EXISTS departamentos')
+        placeholder = '%s'
+    else:
+        # Sintaxis SQLite
         cur.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, dolar REAL)')
         cur.execute('INSERT OR IGNORE INTO config (id, dolar) VALUES (1, 3.4)')
         cur.execute('''
@@ -153,35 +339,118 @@ def init_db():
                 estado TEXT DEFAULT ''
             )
         ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS gestor_cobranzas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inmueble TEXT NOT NULL,
+                inquilino TEXT,
+                periodo TEXT NOT NULL,
+                vencimiento DATE,
+                monto REAL NOT NULL DEFAULT 0.0,
+                monto_pagado REAL NOT NULL DEFAULT 0.0,
+                estado TEXT DEFAULT 'Pendiente',
+                fecha_pago DATE,
+                observacion TEXT
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS inmuebles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo TEXT NOT NULL UNIQUE,
+                descripcion TEXT,
+                direccion TEXT,
+                tipo TEXT DEFAULT 'Departamento',
+                estado TEXT DEFAULT 'Disponible',
+                monto_renta REAL DEFAULT 0.0,
+                porcentaje REAL DEFAULT 30.0
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS inquilinos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                dni TEXT,
+                telefono TEXT,
+                email TEXT,
+                direccion_anterior TEXT,
+                observacion TEXT
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS contratos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inmueble_id INTEGER REFERENCES inmuebles(id),
+                inquilino_id INTEGER REFERENCES inquilinos(id),
+                fecha_inicio DATE NOT NULL,
+                fecha_fin DATE,
+                monto_mensual REAL NOT NULL DEFAULT 0.0,
+                dia_pago INTEGER DEFAULT 1,
+                estado TEXT DEFAULT 'Activo',
+                observacion TEXT
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                is_active INTEGER NOT NULL DEFAULT 1
+            )
+        ''')
+        # Migrar porcentajes de departamentos -> inmuebles (SQLite)
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='departamentos'")
+        if cur.fetchone():
+            cur.execute('SELECT nombre, porcentaje FROM departamentos')
+            for dep_nombre, dep_pct in cur.fetchall():
+                if dep_pct is None:
+                    continue
+                cur.execute(
+                    'UPDATE inmuebles SET porcentaje = ? WHERE LOWER(codigo) = LOWER(?) AND porcentaje = 30.0',
+                    (float(dep_pct), str(dep_nombre))
+                )
+            conn.commit()
+        cur.execute('DROP TABLE IF EXISTS departamentos')
         placeholder = '?'
-        date_default = "date('now')"
-    
-    # Datos iniciales
-    cur.execute('SELECT count(*) FROM departamentos')
+
+    ensure_inmuebles_porcentaje_column(conn, cur)
+
+    today = datetime.date.today()
+    current_month_start = today.replace(day=1)
+    previous_month_start = shift_month(current_month_start, -1)
+    next_month_start = shift_month(current_month_start, 1)
+    previous_period = f'{previous_month_start.year}-{previous_month_start.month:02d}'
+    current_period = f'{current_month_start.year}-{current_month_start.month:02d}'
+
+    # Seed inmuebles if empty
+    cur.execute('SELECT count(*) FROM inmuebles')
     if cur.fetchone()[0] == 0:
-        deps = ['1er Piso', '3A', '3B', '4A', '4B', '4C', '5A', '2P_SJM']
-        for dep in deps:
+        inmuebles_seed = [
+            ('1P', 'Primer Piso', 'Surquillo', 'Piso', 'Disponible', 1800.0),
+            ('3A', 'Departamento 3A', 'Surquillo', 'Departamento', 'Alquilado', 1450.0),
+            ('3B', 'Departamento 3B', 'Surquillo', 'Departamento', 'Alquilado', 1380.0),
+            ('3C', 'Departamento 3C', 'Surquillo', 'Departamento', 'Disponible', 1320.0),
+            ('4A', 'Departamento 4A', 'Surquillo', 'Departamento', 'Alquilado', 1520.0),
+            ('4B', 'Departamento 4B', 'Surquillo', 'Departamento', 'Alquilado', 1490.0),
+            ('4C', 'Departamento 4C', 'Surquillo', 'Departamento', 'Disponible', 1410.0),
+            ('5A', 'Departamento 5A', 'Surquillo', 'Departamento', 'Disponible', 1600.0),
+            ('2Psjm', 'Segundo Piso SJM', 'SJM', 'Piso', 'Alquilado', 1100.0),
+        ]
+        p = placeholder
+        for row in inmuebles_seed:
             cur.execute(
-                f'INSERT INTO departamentos (nombre, porcentaje, renta, costo_administrativo, ingreso_neto) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})',
-                (dep, 30.0, 1000.0, 300.0, 700.0)
+                f'INSERT INTO inmuebles (codigo, descripcion, direccion, tipo, estado, monto_renta) VALUES ({p}, {p}, {p}, {p}, {p}, {p})',
+                row
             )
     
     # Seed cronograma_pagos if empty
     cur.execute('SELECT count(*) FROM cronograma_pagos')
     if cur.fetchone()[0] == 0:
         seed_cronograma = [
-            (1,  '27 de marzo',              'Predial Cuota 01',                         637.00,   ''),
-            (2,  '27 de marzo',              'Arbitrios Bimestre 01 (3 predios)',         464.23,   ''),
-            (3,  '27 de marzo',              'Arbitrios + Predial',                       1101.23,  'Pagado'),
-            (4,  '30 de abril de 2026',      'Arbitrios Bimestre 02 (3 predios)',         425.54,   'Pendiente'),
-            (5,  '29 de mayo de 2026',       'Predial Cuota 02',                          627.33,   'Pendiente'),
-            (6,  '30 de junio de 2026',      'Arbitrios Bimestre 03 (3 predios)',         425.54,   'Pendiente'),
-            (7,  '31 de agosto de 2026',     'Arbitrios Bimestre 04 (3 predios)',         425.54,   ''),
-            (8,  '31 de agosto de 2026',     'Predial Cuota 03',                          627.33,   ''),
-            (9,  'Total 31 ago',             '(Arbitrios + Predial)',                     1052.87,  'Pendiente'),
-            (10, '30 de octubre de 2026',    'Arbitrios Bimestre 05 (3 predios)',         425.54,   'Pendiente'),
-            (11, '30 de noviembre de 2026',  'Predial Cuota 04',                          627.33,   'Pendiente'),
-            (12, '31 de diciembre de 2026',  'Arbitrios Bimestre 06 (3 predios)',         425.54,   'Pendiente'),
+            (1, format_spanish_date(current_month_start + datetime.timedelta(days=9)), 'Predial Cuota Mes Actual', 637.00, 'Pendiente'),
+            (2, format_spanish_date(current_month_start + datetime.timedelta(days=24)), 'Arbitrios Mes Actual', 425.54, 'Pendiente'),
+            (3, format_spanish_date(next_month_start + datetime.timedelta(days=9)), 'Predial Cuota Mes Siguiente', 637.00, ''),
+            (4, format_spanish_date(next_month_start + datetime.timedelta(days=24)), 'Arbitrios Mes Siguiente', 425.54, ''),
         ]
         for s in seed_cronograma:
             cur.execute(
@@ -189,50 +458,362 @@ def init_db():
                 s
             )
 
+    # Seed default admin user if not exists
+    admin_username = os.environ.get('AUTH_DEFAULT_ADMIN_USER', 'admin')
+    admin_password = os.environ.get('AUTH_DEFAULT_ADMIN_PASSWORD', 'admin123')
+    active_value = get_active_value()
+    cur.execute(f'SELECT id FROM users WHERE username={placeholder}', (admin_username,))
+    if not cur.fetchone():
+        cur.execute(
+            f'INSERT INTO users (username, password_hash, role, is_active) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})',
+            (admin_username, generate_password_hash(admin_password), 'admin', active_value)
+        )
+
+    demo_users = [
+        ('user01', 'user123', 'user'),
+        ('user02', 'user123', 'user'),
+    ]
+    for username, password, role in demo_users:
+        cur.execute(f'SELECT id FROM users WHERE username={placeholder}', (username,))
+        if not cur.fetchone():
+            cur.execute(
+                f'INSERT INTO users (username, password_hash, role, is_active) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})',
+                (username, generate_password_hash(password), role, active_value)
+            )
+
+    cur.execute('SELECT count(*) FROM inquilinos')
+    if cur.fetchone()[0] == 0:
+        tenants_seed = [
+            ('Ana Quispe', '45879632', '987654321', 'ana.quispe@example.com', 'Miraflores', 'Buen historial de pago'),
+            ('Carlos Rojas', '47125896', '945612378', 'carlos.rojas@example.com', 'Lince', 'Prefiere transferencia bancaria'),
+            ('Lucia Torres', '48214579', '934111222', 'lucia.torres@example.com', 'San Borja', 'Renovacion en evaluacion'),
+            ('Miguel Huaman', '49563124', '955888444', 'miguel.huaman@example.com', 'SJM', 'Pago puntual'),
+        ]
+        for tenant in tenants_seed:
+            cur.execute(
+                f'INSERT INTO inquilinos (nombre, dni, telefono, email, direccion_anterior, observacion) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})',
+                tenant
+            )
+
+    cur.execute('SELECT count(*) FROM contratos')
+    if cur.fetchone()[0] == 0:
+        contract_seed = [
+            ('3A', 'Ana Quispe', previous_month_start + datetime.timedelta(days=2), next_month_start + datetime.timedelta(days=28), 1450.0, 5, 'Activo', 'Contrato demo por dos meses'),
+            ('3B', 'Carlos Rojas', previous_month_start + datetime.timedelta(days=4), next_month_start + datetime.timedelta(days=27), 1380.0, 8, 'Activo', 'Renovacion automatica'),
+            ('4A', 'Lucia Torres', previous_month_start + datetime.timedelta(days=6), next_month_start + datetime.timedelta(days=26), 1520.0, 10, 'Activo', 'Incluye mantenimiento'),
+            ('2Psjm', 'Miguel Huaman', previous_month_start + datetime.timedelta(days=1), next_month_start + datetime.timedelta(days=25), 1100.0, 12, 'Activo', 'Contrato piso SJM'),
+        ]
+        for codigo, inquilino, fecha_inicio, fecha_fin, monto_mensual, dia_pago, estado, observacion in contract_seed:
+            cur.execute(f'SELECT id FROM inmuebles WHERE codigo={placeholder}', (codigo,))
+            inmueble_row = cur.fetchone()
+            cur.execute(f'SELECT id FROM inquilinos WHERE nombre={placeholder}', (inquilino,))
+            inquilino_row = cur.fetchone()
+            if not inmueble_row or not inquilino_row:
+                continue
+            cur.execute(
+                f'INSERT INTO contratos (inmueble_id, inquilino_id, fecha_inicio, fecha_fin, monto_mensual, dia_pago, estado, observacion) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})',
+                (inmueble_row[0], inquilino_row[0], fecha_inicio.isoformat(), fecha_fin.isoformat(), monto_mensual, dia_pago, estado, observacion)
+            )
+            cur.execute(
+                f'UPDATE inmuebles SET estado={placeholder}, monto_renta={placeholder} WHERE id={placeholder}',
+                ('Alquilado', monto_mensual, inmueble_row[0])
+            )
+
+    cobranza_seed = [
+        ('3A', 'Ana Quispe', previous_period, previous_month_start + datetime.timedelta(days=4), 1450.0, 1450.0, 'Pagado', previous_month_start + datetime.timedelta(days=4), 'Pago completo del mes anterior'),
+        ('3B', 'Carlos Rojas', previous_period, previous_month_start + datetime.timedelta(days=7), 1380.0, 1380.0, 'Pagado', previous_month_start + datetime.timedelta(days=8), 'Pago validado'),
+        ('4A', 'Lucia Torres', previous_period, previous_month_start + datetime.timedelta(days=9), 1520.0, 1520.0, 'Pagado', previous_month_start + datetime.timedelta(days=10), 'Sin observaciones'),
+        ('2Psjm', 'Miguel Huaman', previous_period, previous_month_start + datetime.timedelta(days=11), 1100.0, 1100.0, 'Pagado', previous_month_start + datetime.timedelta(days=11), 'Pago puntual'),
+        ('3A', 'Ana Quispe', current_period, current_month_start + datetime.timedelta(days=4), 1450.0, 1450.0, 'Pagado', current_month_start + datetime.timedelta(days=4), 'Mes actual cancelado'),
+        ('3B', 'Carlos Rojas', current_period, current_month_start + datetime.timedelta(days=7), 1380.0, 690.0, 'Parcial', current_month_start + datetime.timedelta(days=8), 'Pendiente saldo'),
+        ('4A', 'Lucia Torres', current_period, current_month_start + datetime.timedelta(days=9), 1520.0, 0.0, 'Pendiente', None, 'Aun sin pago'),
+        ('2Psjm', 'Miguel Huaman', current_period, current_month_start + datetime.timedelta(days=11), 1100.0, 1100.0, 'Pagado', current_month_start + datetime.timedelta(days=11), 'Transferencia recibida'),
+    ]
+    for inmueble, inquilino, periodo, vencimiento, monto, monto_pagado, estado, fecha_pago, observacion in cobranza_seed:
+        cur.execute(
+            f'SELECT id FROM gestor_cobranzas WHERE inmueble={placeholder} AND inquilino={placeholder} AND periodo={placeholder}',
+            (inmueble, inquilino, periodo)
+        )
+        if not cur.fetchone():
+            cur.execute(
+                f'INSERT INTO gestor_cobranzas (inmueble, inquilino, periodo, vencimiento, monto, monto_pagado, estado, fecha_pago, observacion) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})',
+                (
+                    inmueble,
+                    inquilino,
+                    periodo,
+                    vencimiento.isoformat(),
+                    monto,
+                    monto_pagado,
+                    estado,
+                    fecha_pago.isoformat() if fecha_pago else None,
+                    observacion,
+                )
+            )
+
+    # Seed de gastos solo en local (SQLite); en Neon se respetan los datos reales
+    if not get_database_url():
+        gastos_seed = [
+            (previous_month_start + datetime.timedelta(days=1), 'Limpieza general', 'Servicio semanal de limpieza', 'Mantenimiento', 180.0),
+            (previous_month_start + datetime.timedelta(days=6), 'Reparacion bomba', 'Cambio de valvula en cisterna', 'Mantenimiento', 420.0),
+            (previous_month_start + datetime.timedelta(days=12), 'Recibo de agua', 'Consumo mensual del edificio', 'Servicios', 310.0),
+            (previous_month_start + datetime.timedelta(days=18), 'Material electrico', 'Reposicion de focos y cableado', 'Mantenimiento', 265.0),
+            (current_month_start + datetime.timedelta(days=2), 'Recibo de luz', 'Consumo areas comunes', 'Servicios', 295.0),
+            (current_month_start + datetime.timedelta(days=7), 'Seguridad', 'Pago de vigilancia', 'Personal', 520.0),
+            (current_month_start + datetime.timedelta(days=13), 'Pintura pasadizo', 'Retoque de areas comunes', 'Mejoras', 460.0),
+            (current_month_start + datetime.timedelta(days=19), 'Internet oficina', 'Conectividad administrativa', 'Servicios', 129.9),
+        ]
+        for fecha, nombre_gasto, descripcion, categoria, costo in gastos_seed:
+            cur.execute(
+                f'SELECT id FROM gastos WHERE fecha={placeholder} AND nombre_gasto={placeholder}',
+                (fecha.isoformat(), nombre_gasto)
+            )
+            if not cur.fetchone():
+                cur.execute(
+                    f'INSERT INTO gastos (fecha, nombre_gasto, descripcion, categoria, costo, monto) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})',
+                    (fecha.isoformat(), nombre_gasto, descripcion, categoria, costo, costo)
+                )
+
     conn.commit()
     cur.close()
     conn.close()
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if is_authenticated():
+        return redirect(url_for('index'))
+
+    next_path = request.args.get('next') or '/'
+
     if request.method == 'POST':
+        username = (request.form.get('username') or '').strip()
         password = request.form.get('password')
-        if password == 'Artemis-02':
-            session['admin'] = True
+        next_from_form = request.form.get('next') or '/'
+
+        conn = get_db_connection()
+        cur = get_cursor(conn)
+        p = get_placeholder()
+        cur.execute(
+            f'SELECT id, username, password_hash, role, is_active FROM users WHERE username={p}',
+            (username,)
+        )
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if user and user['is_active'] and check_password_hash(user['password_hash'], password or ''):
+            session.clear()
+            session['user_id'] = user['id']
+            session['username'] = user['username']
+            session['role'] = user['role']
+
+            if next_from_form.startswith('/'):
+                return redirect(next_from_form)
             return redirect(url_for('index'))
-        else:
-            return render_template('login.html', error='Contraseña incorrecta')
-    return render_template('login.html')
+
+        return render_template('login.html', error='Usuario o contraseña incorrectos', next_path=next_from_form)
+
+    return render_template('login.html', next_path=next_path)
 
 @app.route('/logout')
 def logout():
-    session.pop('admin', None)
-    return redirect(url_for('index'))
+    session.clear()
+    return redirect(url_for('login'))
 
-@app.route('/')
+
+@app.route('/usuarios')
+@admin_required
+def usuarios():
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    cur.execute('SELECT id, username, role, is_active FROM users ORDER BY id ASC')
+    users = cur.fetchall()
+    cur.close()
+    conn.close()
+    return render_template(
+        'usuarios.html',
+        users=users,
+        message=request.args.get('msg'),
+        error=request.args.get('err'),
+        current_user_id=session.get('user_id'),
+    )
+
+
+@app.route('/usuarios/add', methods=['POST'])
+@admin_required
+def add_user():
+    username = (request.form.get('username') or '').strip()
+    password = request.form.get('password') or ''
+    role = (request.form.get('role') or 'user').strip().lower()
+
+    if not username or len(password) < 6:
+        return redirect(url_for('usuarios', err='Completa usuario y clave (minimo 6 caracteres).'))
+    if role not in {'admin', 'user'}:
+        role = 'user'
+
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+
+    cur.execute(f'SELECT id FROM users WHERE username={p}', (username,))
+    exists = cur.fetchone()
+    if exists:
+        cur.close()
+        conn.close()
+        return redirect(url_for('usuarios', err='El usuario ya existe.'))
+
+    active_value = get_active_value()
+    write_cur = conn.cursor()
+    write_cur.execute(
+        f'INSERT INTO users (username, password_hash, role, is_active) VALUES ({p}, {p}, {p}, {p})',
+        (username, generate_password_hash(password), role, active_value)
+    )
+    conn.commit()
+    write_cur.close()
+    cur.close()
+    conn.close()
+    return redirect(url_for('usuarios', msg='Usuario creado correctamente.'))
+
+
+@app.route('/usuarios/<int:user_id>/toggle', methods=['POST'])
+@admin_required
+def toggle_user_status(user_id):
+    current_user_id = session.get('user_id')
+    if current_user_id == user_id:
+        return redirect(url_for('usuarios', err='No puedes desactivar tu propio usuario.'))
+
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+    cur.execute(f'SELECT id, role, is_active FROM users WHERE id={p}', (user_id,))
+    target = cur.fetchone()
+
+    if not target:
+        cur.close()
+        conn.close()
+        return redirect(url_for('usuarios', err='Usuario no encontrado.'))
+
+    target_active = db_is_active(target['is_active'])
+    target_role = target['role']
+
+    if target_active and target_role == 'admin':
+        total_admins = count_active_admins(cur)
+        if total_admins <= 1:
+            cur.close()
+            conn.close()
+            return redirect(url_for('usuarios', err='No puedes desactivar al ultimo administrador activo.'))
+
+    new_active = not target_active
+    new_active_value = new_active if get_database_url() else int(new_active)
+    write_cur = conn.cursor()
+    write_cur.execute(
+        f'UPDATE users SET is_active={p} WHERE id={p}',
+        (new_active_value, user_id)
+    )
+    conn.commit()
+    write_cur.close()
+    cur.close()
+    conn.close()
+    return redirect(url_for('usuarios', msg='Estado de usuario actualizado.'))
+
+
+@app.route('/usuarios/<int:user_id>/role', methods=['POST'])
+@admin_required
+def update_user_role(user_id):
+    new_role = (request.form.get('role') or 'user').strip().lower()
+    if new_role not in {'admin', 'user'}:
+        return redirect(url_for('usuarios', err='Rol invalido.'))
+
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+    cur.execute(f'SELECT id, role, is_active FROM users WHERE id={p}', (user_id,))
+    target = cur.fetchone()
+
+    if not target:
+        cur.close()
+        conn.close()
+        return redirect(url_for('usuarios', err='Usuario no encontrado.'))
+
+    target_active = db_is_active(target['is_active'])
+    if target['role'] == 'admin' and new_role != 'admin' and target_active:
+        total_admins = count_active_admins(cur)
+        if total_admins <= 1:
+            cur.close()
+            conn.close()
+            return redirect(url_for('usuarios', err='No puedes cambiar el rol del ultimo administrador activo.'))
+
+    write_cur = conn.cursor()
+    write_cur.execute(
+        f'UPDATE users SET role={p} WHERE id={p}',
+        (new_role, user_id)
+    )
+    conn.commit()
+    write_cur.close()
+
+    if user_id == session.get('user_id'):
+        session['role'] = new_role
+
+    cur.close()
+    conn.close()
+    return redirect(url_for('usuarios', msg='Rol de usuario actualizado.'))
+
+
+@app.route('/usuarios/<int:user_id>/password', methods=['POST'])
+@admin_required
+def update_user_password(user_id):
+    new_password = request.form.get('new_password') or ''
+    if len(new_password) < 6:
+        return redirect(url_for('usuarios', err='La nueva clave debe tener al menos 6 caracteres.'))
+
+    conn = get_db_connection()
+    write_cur = conn.cursor()
+    p = get_placeholder()
+    write_cur.execute(
+        f'UPDATE users SET password_hash={p} WHERE id={p}',
+        (generate_password_hash(new_password), user_id)
+    )
+    conn.commit()
+    updated = write_cur.rowcount
+    write_cur.close()
+    conn.close()
+
+    if not updated:
+        return redirect(url_for('usuarios', err='Usuario no encontrado.'))
+    return redirect(url_for('usuarios', msg='Clave actualizada correctamente.'))
+
 @app.route('/')
 def index():
     conn = get_db_connection()
     cur = get_cursor(conn)
-    
+
     try:
-        cur.execute('SELECT * FROM departamentos ORDER BY id ASC')
-        deps = cur.fetchall()
-        
-        cur.execute('SELECT dolar FROM config WHERE id = 1')
-        row = cur.fetchone()
+        cur.execute('SELECT id, codigo, descripcion, monto_renta, porcentaje FROM inmuebles ORDER BY id ASC')
+        inmuebles_rows = cur.fetchall()
+        dolar = get_dolar_rate(conn, cur)
     except Exception as e:
         print(f"Error en la consulta: {e}")
-        deps = []
-        row = None
+        inmuebles_rows = []
+        dolar = 1.0
     finally:
         cur.close()
         conn.close()
 
-    dolar = row['dolar'] if row else 1.0
-    # ... resto de tu lógica de cálculos ...
-    
-    total_ingreso_neto = sum(dep['ingreso_neto'] or 0 for dep in deps)
+    inmuebles = []
+    for dep in inmuebles_rows:
+        porcentaje = normalize_percentage(dep['porcentaje'], 30.0)
+        monto_renta = to_float(dep['monto_renta'])
+        costo_administrativo = monto_renta * (porcentaje / 100)
+        ingreso_neto = monto_renta - costo_administrativo
+        inmuebles.append({
+            'id': dep['id'],
+            'codigo': dep['codigo'],
+            'descripcion': dep['descripcion'],
+            'monto_renta': monto_renta,
+            'porcentaje': porcentaje,
+            'costo_administrativo': costo_administrativo,
+            'ingreso_neto': ingreso_neto,
+        })
+    total_ingreso_neto = sum(dep['ingreso_neto'] for dep in inmuebles)
     total_ingreso_dolares = total_ingreso_neto / dolar if dolar else 0.0
     pago_cuota, gasto_father = 600.0, 300.0
     saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father
@@ -243,30 +824,30 @@ def index():
     months_passed = (current_date.year - start_date.year) * 12 + (current_date.month - start_date.month)
     cuotas_pendientes = max(0, 23 - months_passed)
     
-    editable = 'admin' in session
-    return render_template('index.html', departamentos=deps, dolar=dolar, total_ingreso_neto=total_ingreso_neto, total_ingreso_dolares=total_ingreso_dolares, pago_cuota=pago_cuota, gasto_father=gasto_father, saldo_mother=saldo_mother, cuotas_pendientes=cuotas_pendientes, editable=editable, current_date=current_date.strftime("%d/%m/%Y"))
+    editable = is_admin()
+    return render_template('index.html', inmuebles=inmuebles, dolar=dolar, total_ingreso_neto=total_ingreso_neto, total_ingreso_dolares=total_ingreso_dolares, pago_cuota=pago_cuota, gasto_father=gasto_father, saldo_mother=saldo_mother, cuotas_pendientes=cuotas_pendientes, editable=editable, current_date=current_date.strftime("%d/%m/%Y"))
 
 @app.route('/gastos')
 def gastos():
     conn = get_db_connection()
     cur = get_cursor(conn)
-    cur.execute('SELECT dolar FROM config WHERE id = 1')
-    dolar = cur.fetchone()['dolar']
+    dolar = get_dolar_rate(conn, cur)
     cur.execute('SELECT * FROM gastos ORDER BY fecha DESC')
     gastos_list = cur.fetchall()
     total_gastos = sum(float(g['costo'] or 0) for g in gastos_list)
     cur.close()
     conn.close()
-    return render_template('gastos.html', editable='admin' in session, dolar=dolar, total_gastos=total_gastos, total_gastos_usd=total_gastos/dolar, gastos=gastos_list)
+    return render_template('gastos.html', editable=is_admin(), dolar=dolar, total_gastos=total_gastos, total_gastos_usd=total_gastos/dolar, gastos=gastos_list)
 
 @app.route('/gastos/add', methods=['GET', 'POST'])
+@admin_redirect('gastos')
 def add_gasto():
-    if 'admin' not in session: return redirect(url_for('gastos'))
     if request.method == 'POST':
         conn = get_db_connection()
         cur = conn.cursor()
+        costo_value = to_float(request.form.get('costo'))
         cur.execute(f'INSERT INTO gastos (fecha, nombre_gasto, descripcion, categoria, costo, monto) VALUES ({get_placeholder()}, {get_placeholder()}, {get_placeholder()}, {get_placeholder()}, {get_placeholder()}, {get_placeholder()})',
-                    (request.form.get('fecha'), request.form.get('nombre_gasto'), request.form.get('descripcion'), request.form.get('categoria'), float(request.form.get('costo')), float(request.form.get('costo'))))
+                    (request.form.get('fecha'), request.form.get('nombre_gasto'), request.form.get('descripcion'), request.form.get('categoria'), costo_value, costo_value))
         conn.commit()
         cur.close()
         conn.close()
@@ -275,26 +856,28 @@ def add_gasto():
 
 
 @app.route('/update', methods=['POST'])
+@admin_redirect('index')
 def update():
-    if 'admin' not in session: return redirect(url_for('index'))
     conn = get_db_connection()
     cur = conn.cursor()
+    placeholder = get_placeholder()
     
     # Update Dólar
     nuevo_dolar = request.form.get('precio_dolar')
     if nuevo_dolar:
-        if 'DATABASE_URL' in os.environ:
-            cur.execute(f'INSERT INTO config (id, dolar) VALUES (1, {get_placeholder()}) ON CONFLICT (id) DO UPDATE SET dolar = EXCLUDED.dolar', (float(nuevo_dolar),))
+        if get_database_url():
+            cur.execute(f'INSERT INTO config (id, dolar) VALUES (1, {placeholder}) ON CONFLICT (id) DO UPDATE SET dolar = EXCLUDED.dolar', (float(nuevo_dolar),))
         else:
-            cur.execute(f'INSERT OR REPLACE INTO config (id, dolar) VALUES (1, {get_placeholder()})', (float(nuevo_dolar),))
+            cur.execute(f'INSERT OR REPLACE INTO config (id, dolar) VALUES (1, {placeholder})', (float(nuevo_dolar),))
     
-    # Update Departamentos
-    for dep_id in request.form.getlist('id'):
-        p = float(request.form.get(f'porcentaje_{dep_id}'))
-        r = float(request.form.get(f'renta_{dep_id}'))
-        costo_adm = r * (p / 100)
-        cur.execute(f'UPDATE departamentos SET porcentaje={get_placeholder()}, renta={get_placeholder()}, costo_administrativo={get_placeholder()}, ingreso_neto={get_placeholder()} WHERE id={get_placeholder()}',
-                    (p, r, costo_adm, r - costo_adm, int(dep_id)))
+    # Update inmuebles (renta y porcentaje)
+    for inmueble_id in request.form.getlist('id'):
+        renta = to_float(request.form.get(f'renta_{inmueble_id}'))
+        porcentaje = normalize_percentage(request.form.get(f'porcentaje_{inmueble_id}'), 30.0)
+        cur.execute(
+            f'UPDATE inmuebles SET monto_renta={placeholder}, porcentaje={placeholder} WHERE id={placeholder}',
+            (renta, porcentaje, int(inmueble_id))
+        )
     
     conn.commit()
     cur.close()
@@ -308,7 +891,7 @@ def tributos():
     cur = get_cursor(conn)
     p = get_placeholder()
 
-    if request.method == 'POST' and 'admin' in session:
+    if request.method == 'POST' and is_admin():
         cur.execute('SELECT id FROM cronograma_pagos')
         ids = [r['id'] for r in cur.fetchall()]
         for row_id in ids:
@@ -320,12 +903,12 @@ def tributos():
     rows = cur.fetchall()
     cur.close()
     conn.close()
-    return render_template('tributos_muni_surqui.html', rows=rows, editable='admin' in session)
+    return render_template('tributos_muni_surqui.html', rows=rows, editable=is_admin())
 
 
 @app.route('/tributos/add', methods=['GET', 'POST'])
 def add_cronograma():
-    if 'admin' not in session:
+    if not is_admin():
         return redirect(url_for('tributos'))
     if request.method == 'POST':
         conn = get_db_connection()
@@ -336,7 +919,7 @@ def add_cronograma():
         cur.execute(
             f'INSERT INTO cronograma_pagos (item, fecha_vencimiento, concepto, monto, estado) VALUES ({p}, {p}, {p}, {p}, {p})',
             (item_val, request.form.get('fecha_vencimiento'), request.form.get('concepto'),
-             float(request.form.get('monto', 0)), request.form.get('estado', ''))
+               to_float(request.form.get('monto', 0)), request.form.get('estado', ''))
         )
         conn.commit()
         cur.close()
@@ -347,7 +930,7 @@ def add_cronograma():
 
 @app.route('/tributos/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_cronograma(entry_id):
-    if 'admin' not in session:
+    if not is_admin():
         return redirect(url_for('tributos'))
     conn = get_db_connection()
     cur = get_cursor(conn)
@@ -358,7 +941,7 @@ def edit_cronograma(entry_id):
         cur.execute(
             f'UPDATE cronograma_pagos SET item={p}, fecha_vencimiento={p}, concepto={p}, monto={p}, estado={p} WHERE id={p}',
             (item_val, request.form.get('fecha_vencimiento'), request.form.get('concepto'),
-             float(request.form.get('monto', 0)), request.form.get('estado', ''), entry_id)
+               to_float(request.form.get('monto', 0)), request.form.get('estado', ''), entry_id)
         )
         conn.commit()
         cur.close()
@@ -375,7 +958,7 @@ def edit_cronograma(entry_id):
 
 @app.route('/tributos/<int:entry_id>/delete', methods=['POST'])
 def delete_cronograma(entry_id):
-    if 'admin' not in session:
+    if not is_admin():
         return redirect(url_for('tributos'))
     conn = get_db_connection()
     cur = conn.cursor()
@@ -397,17 +980,14 @@ def download_cronograma():
 def gastos_semana():
     conn = get_db_connection()
     cur = get_cursor(conn)
+    dolar = get_dolar_rate(conn, cur)
 
     today = datetime.date.today()
     start_of_week = today - datetime.timedelta(days=today.weekday())
     end_of_week = start_of_week + datetime.timedelta(days=6)
     start_previous = start_of_week - datetime.timedelta(days=7)
     end_previous = start_of_week - datetime.timedelta(days=1)
-
     p = get_placeholder()
-    cur.execute('SELECT dolar FROM config WHERE id = 1')
-    row_dolar = cur.fetchone()
-    dolar = row_dolar['dolar'] if row_dolar else 1.0
 
     cur.execute(
         f'SELECT * FROM gastos WHERE fecha >= {p} AND fecha <= {p} ORDER BY fecha DESC',
@@ -476,57 +1056,66 @@ def gastos_mes():
     cur = get_cursor(conn)
 
     today = datetime.date.today()
-    start_of_month = today.replace(day=1)
-    if start_of_month.month == 12:
-        next_month = datetime.date(start_of_month.year + 1, 1, 1)
-    else:
-        next_month = datetime.date(start_of_month.year, start_of_month.month + 1, 1)
+    dolar = get_dolar_rate(conn, cur)
 
+    # Calcular los 3 últimos meses consecutivos (más antiguo primero)
+    month_starts = []
+    for i in range(2, -1, -1):
+        m = today.month - i
+        y = today.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        month_starts.append(datetime.date(y, m, 1))
+
+    range_start = month_starts[0]
+    last_start = month_starts[-1]
+    lm = last_start.month
+    ly = last_start.year
+    range_end = datetime.date(ly + 1, 1, 1) if lm == 12 else datetime.date(ly, lm + 1, 1)
     p = get_placeholder()
-    cur.execute('SELECT dolar FROM config WHERE id = 1')
-    row_dolar = cur.fetchone()
-    dolar = row_dolar['dolar'] if row_dolar else 1.0
 
     cur.execute(
-        f'SELECT * FROM gastos WHERE fecha >= {p} AND fecha < {p} ORDER BY fecha DESC',
-        (start_of_month.isoformat(), next_month.isoformat())
+        f'SELECT * FROM gastos WHERE fecha >= {p} AND fecha < {p} ORDER BY fecha ASC',
+        (range_start.isoformat(), range_end.isoformat())
     )
-    gastos_list = cur.fetchall()
+    all_gastos = cur.fetchall()
 
     cur.close()
     conn.close()
 
-    last_day = calendar.monthrange(start_of_month.year, start_of_month.month)[1]
-    labels = [str(day) for day in range(1, last_day + 1)]
-    data_pen = [0.0] * last_day
-    data_usd = [0.0] * last_day
+    all_categories = sorted({(g['categoria'] or 'Sin categoría') for g in all_gastos})
 
-    for g in gastos_list:
-        d = coerce_date(g['fecha'])
-        if d is None:
-            continue
-        idx = d.day - 1
-        cost = float(g['costo'] or 0)
-        data_pen[idx] += cost
-        data_usd[idx] += (cost / dolar) if dolar else 0.0
-
-    total_mes = sum(float(g['costo'] or 0) for g in gastos_list)
+    months_data = []
+    for ms in month_starts:
+        me = ms.month
+        ye = ms.year
+        ms_end = datetime.date(ye + 1, 1, 1) if me == 12 else datetime.date(ye, me + 1, 1)
+        month_gastos = [g for g in all_gastos if coerce_date(g['fecha']) is not None and ms <= coerce_date(g['fecha']) < ms_end]
+        by_cat = {}
+        for cat in all_categories:
+            by_cat[cat] = sum(float(g['costo'] or 0) for g in month_gastos if (g['categoria'] or 'Sin categoría') == cat)
+        total = sum(float(g['costo'] or 0) for g in month_gastos)
+        months_data.append({
+            'label': f"{MESES_ES[ms.month - 1].capitalize()} {ms.year}",
+            'start': ms,
+            'total_pen': total,
+            'total_usd': (total / dolar) if dolar else 0.0,
+            'by_category': by_cat,
+            'gastos': month_gastos,
+        })
 
     return render_template(
         'gastos_mes.html',
-        gastos=gastos_list,
-        labels=labels,
-        data_pen=data_pen,
-        data_usd=data_usd,
-        total_mes=total_mes,
-        total_mes_usd=(total_mes / dolar) if dolar else 0.0,
-        start_of_month=start_of_month,
+        months_data=months_data,
+        all_categories=all_categories,
+        dolar=dolar,
     )
 
 
 @app.route('/gastos/<int:gasto_id>/edit', methods=['GET', 'POST'])
 def edit_gasto(gasto_id):
-    if 'admin' not in session:
+    if not is_admin():
         return redirect(url_for('gastos'))
 
     conn = get_db_connection()
@@ -534,6 +1123,7 @@ def edit_gasto(gasto_id):
     p = get_placeholder()
 
     if request.method == 'POST':
+        costo_value = to_float(request.form.get('costo'))
         cur.execute(
             f'UPDATE gastos SET fecha={p}, nombre_gasto={p}, descripcion={p}, categoria={p}, costo={p}, monto={p} WHERE id={p}',
             (
@@ -541,8 +1131,8 @@ def edit_gasto(gasto_id):
                 request.form.get('nombre_gasto'),
                 request.form.get('descripcion'),
                 request.form.get('categoria'),
-                float(request.form.get('costo')),
-                float(request.form.get('costo')),
+                costo_value,
+                costo_value,
                 gasto_id,
             ),
         )
@@ -564,6 +1154,276 @@ def edit_gasto(gasto_id):
 @app.route('/tributos-sjm')
 def tributos_sjm():
     return render_template('tributos_sjm.html')
+
+@app.route('/cobranzas-rentas')
+def cobranzas_rentas():
+    view_mode = (request.args.get('view') or 'dashboard').strip().lower()
+    if view_mode not in {'dashboard', 'historial', 'inmuebles'}:
+        view_mode = 'dashboard'
+
+    historial_periodo = (request.args.get('periodo') or '').strip()
+    historial_inquilino = (request.args.get('inquilino') or '').strip()
+    historial_estado = (request.args.get('estado') or '').strip().lower()
+
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    dolar = get_dolar_rate(conn, cur)
+
+    cur.execute('SELECT * FROM gestor_cobranzas ORDER BY vencimiento ASC, id ASC')
+    rows = cur.fetchall()
+
+    cur.execute('SELECT id, codigo, descripcion, estado, monto_renta FROM inmuebles ORDER BY id ASC')
+    inmuebles = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT i.codigo
+        FROM contratos c
+        JOIN inmuebles i ON i.id = c.inmueble_id
+        WHERE LOWER(COALESCE(c.estado, '')) = 'activo'
+        """
+    )
+    activos_rows = cur.fetchall()
+    codigos_activos = {
+        (row['codigo'] or '').strip().lower()
+        for row in activos_rows
+        if (row['codigo'] or '').strip()
+    }
+
+    today = datetime.date.today()
+    periodo_actual = f'{today.year}-{today.month:02d}'
+
+    rows_periodo = [r for r in rows if (r['periodo'] or '') == periodo_actual]
+    esperado_mes = sum(float(r['monto'] or 0) for r in rows_periodo)
+    recaudado_mes = sum(float(r['monto_pagado'] or 0) for r in rows_periodo)
+    porcentaje_cobrado = (recaudado_mes / esperado_mes * 100) if esperado_mes else 0.0
+
+    pendientes_periodo = [
+        r for r in rows_periodo
+        if (r['estado'] or '').lower() != 'pagado' or float(r['monto_pagado'] or 0) < float(r['monto'] or 0)
+    ]
+
+    historial_rows = sorted(
+        rows,
+        key=lambda r: ((r['periodo'] or ''), str(r['vencimiento'] or ''), r['id']),
+        reverse=True,
+    )
+
+    historial_periodos = sorted({(r['periodo'] or '').strip() for r in rows if (r['periodo'] or '').strip()}, reverse=True)
+    historial_inquilinos = sorted({(r['inquilino'] or '').strip() for r in rows if (r['inquilino'] or '').strip()})
+
+    if historial_periodo:
+        historial_rows = [r for r in historial_rows if (r['periodo'] or '').strip() == historial_periodo]
+    if historial_inquilino:
+        historial_rows = [
+            r for r in historial_rows
+            if historial_inquilino.lower() in (r['inquilino'] or '').strip().lower()
+        ]
+    if historial_estado:
+        historial_rows = [r for r in historial_rows if (r['estado'] or '').strip().lower() == historial_estado]
+
+    inmuebles_rows = []
+    for inmueble in inmuebles:
+        codigo = (inmueble['codigo'] or '').strip()
+        match_rows = [
+            row for row in rows
+            if ((row['inmueble'] or '').strip().lower() == codigo.lower())
+        ]
+        latest = None
+        if match_rows:
+            latest = sorted(
+                match_rows,
+                key=lambda r: ((r['periodo'] or ''), r['id']),
+                reverse=True,
+            )[0]
+
+        inmuebles_rows.append({
+            'codigo': inmueble['codigo'],
+            'descripcion': inmueble['descripcion'],
+            'estado': inmueble['estado'],
+            'monto_renta': inmueble['monto_renta'],
+            'inquilino': latest['inquilino'] if latest else None,
+            'periodo': latest['periodo'] if latest else None,
+            'estado_pago': latest['estado'] if latest else None,
+            'monto_pagado': latest['monto_pagado'] if latest else 0,
+        })
+
+    rows_periodo_by_inmueble = {}
+    for row in rows_periodo:
+        inmueble_key = (row['inmueble'] or '').strip().lower()
+        if not inmueble_key:
+            continue
+        bucket = rows_periodo_by_inmueble.setdefault(
+            inmueble_key,
+            {'esperado': 0.0, 'pagado': 0.0}
+        )
+        bucket['esperado'] += float(row['monto'] or 0)
+        bucket['pagado'] += float(row['monto_pagado'] or 0)
+
+    avance_inmuebles = []
+    for inmueble in inmuebles:
+        codigo = (inmueble['codigo'] or '').strip()
+        if codigo.lower() not in codigos_activos:
+            continue
+
+        resumen = rows_periodo_by_inmueble.get(codigo.lower())
+
+        esperado = float(resumen['esperado']) if resumen else float(inmueble['monto_renta'] or 0)
+        pagado_real = float(resumen['pagado']) if resumen else 0.0
+        pagado = min(pagado_real, esperado) if esperado > 0 else 0.0
+        deuda = max(esperado - pagado, 0.0)
+        porcentaje = 100.0 if esperado <= 0 else min((pagado / esperado) * 100, 100.0)
+        completo = esperado > 0 and pagado >= esperado
+
+        avance_inmuebles.append({
+            'codigo': codigo,
+            'descripcion': inmueble['descripcion'],
+            'esperado': esperado,
+            'pagado': pagado,
+            'deuda': deuda,
+            'porcentaje': porcentaje,
+            'completo': completo,
+        })
+
+    avance_inmuebles = sorted(
+        avance_inmuebles,
+        key=lambda r: (r['deuda'], r['esperado'], r['codigo'] or ''),
+        reverse=True,
+    )
+
+    if view_mode == 'historial':
+        panel_title = 'Historial de pagos'
+        total_registros = len(historial_rows)
+    elif view_mode == 'inmuebles':
+        panel_title = 'Listado de inmuebles'
+        total_registros = len(inmuebles_rows)
+    else:
+        panel_title = f'Inmuebles con retraso o pendiente - {MESES_ES[today.month - 1].capitalize()} {today.year}'
+        total_registros = len(pendientes_periodo)
+
+    fecha_hoy = format_spanish_datetime(today)
+    periodo_titulo = f"{MESES_ES[today.month - 1].capitalize()} {today.year}"
+
+    cur.close()
+    conn.close()
+
+    return render_template(
+        'cobranzas_rentas.html',
+        editable=is_admin(),
+        dolar=dolar,
+        esperado_mes=esperado_mes,
+        recaudado_mes=recaudado_mes,
+        porcentaje_cobrado=porcentaje_cobrado,
+        pendientes_count=len(pendientes_periodo),
+        pendientes_rows=pendientes_periodo,
+        historial_rows=historial_rows,
+        inmuebles_rows=inmuebles_rows,
+        view_mode=view_mode,
+        panel_title=panel_title,
+        historial_periodos=historial_periodos,
+        historial_inquilinos=historial_inquilinos,
+        historial_periodo=historial_periodo,
+        historial_inquilino=historial_inquilino,
+        historial_estado=historial_estado,
+        fecha_hoy=fecha_hoy,
+        periodo_titulo=periodo_titulo,
+        total_registros=total_registros,
+        avance_inmuebles=avance_inmuebles,
+    )
+
+
+@app.route('/cobranzas-rentas/add', methods=['GET', 'POST'])
+def add_cobranza_renta():
+    if not is_admin():
+        return redirect(url_for('cobranzas_rentas'))
+
+    if request.method == 'POST':
+        conn = get_db_connection()
+        cur = conn.cursor()
+        p = get_placeholder()
+        cur.execute(
+            f'''INSERT INTO gestor_cobranzas
+                (inmueble, inquilino, periodo, vencimiento, monto, monto_pagado, estado, fecha_pago, observacion)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})''',
+            (
+                request.form.get('inmueble'),
+                request.form.get('inquilino'),
+                request.form.get('periodo'),
+                request.form.get('vencimiento') or None,
+                to_float(request.form.get('monto') or 0),
+                to_float(request.form.get('monto_pagado') or 0),
+                request.form.get('estado') or 'Pendiente',
+                request.form.get('fecha_pago') or None,
+                request.form.get('observacion'),
+            )
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return redirect(url_for('cobranzas_rentas'))
+
+    today = datetime.date.today()
+    return render_template(
+        'add_cobranza_renta.html',
+        fecha_default=today.isoformat(),
+        periodo_default=f'{today.year}-{today.month:02d}'
+    )
+
+
+@app.route('/cobranzas-rentas/<int:entry_id>/edit', methods=['GET', 'POST'])
+def edit_cobranza_renta(entry_id):
+    if not is_admin():
+        return redirect(url_for('cobranzas_rentas'))
+
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+
+    if request.method == 'POST':
+        cur.execute(
+            f'''UPDATE gestor_cobranzas
+                SET inmueble={p}, inquilino={p}, periodo={p}, vencimiento={p},
+                    monto={p}, monto_pagado={p}, estado={p}, fecha_pago={p}, observacion={p}
+                WHERE id={p}''',
+            (
+                request.form.get('inmueble'),
+                request.form.get('inquilino'),
+                request.form.get('periodo'),
+                request.form.get('vencimiento') or None,
+                to_float(request.form.get('monto') or 0),
+                to_float(request.form.get('monto_pagado') or 0),
+                request.form.get('estado') or 'Pendiente',
+                request.form.get('fecha_pago') or None,
+                request.form.get('observacion'),
+                entry_id,
+            )
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return redirect(url_for('cobranzas_rentas'))
+
+    cur.execute(f'SELECT * FROM gestor_cobranzas WHERE id={p}', (entry_id,))
+    entry = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not entry:
+        return redirect(url_for('cobranzas_rentas'))
+    return render_template('edit_cobranza_renta.html', entry=entry)
+
+
+@app.route('/cobranzas-rentas/<int:entry_id>/delete', methods=['POST'])
+def delete_cobranza_renta(entry_id):
+    if not is_admin():
+        return redirect(url_for('cobranzas_rentas'))
+    conn = get_db_connection()
+    cur = conn.cursor()
+    p = get_placeholder()
+    cur.execute(f'DELETE FROM gestor_cobranzas WHERE id={p}', (entry_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return redirect(url_for('cobranzas_rentas'))
 
 # Run init_db at module load so gunicorn (Render) also initialises the DB
 init_db()

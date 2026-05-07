@@ -8,15 +8,15 @@
 <body class="bg-light">
     <div class="container py-5">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 class="mb-0">Panel Administrativo</h2>
+            <h2 class="mb-0">Panel General</h2>
             <div>
-                <a href="{{ url_for('tributos') }}" class="btn btn-outline-primary me-2">TRIBUTOS MUNI SURQUI</a>
+                <a href="{{ url_for('cobranzas_rentas') }}" class="btn btn-outline-success me-2">Cobranzas_Rentas</a>
+                <a href="{{ url_for('tributos') }}" class="btn btn-outline-primary me-2">Tributos_Surqui</a>
                 <a href="{{ url_for('gastos') }}" class="btn btn-outline-primary me-2">Gastos Generales</a>
                 {% if editable %}
-                <a href="{{ url_for('logout') }}" class="btn btn-secondary">Cerrar Sesión</a>
-                {% else %}
-                <a href="{{ url_for('login') }}" class="btn btn-primary">Modo Administrador</a>
+                <a href="{{ url_for('usuarios') }}" class="btn btn-outline-dark me-2">Gestion Usuarios</a>
                 {% endif %}
+                <a href="{{ url_for('logout') }}" class="btn btn-secondary">Cerrar Sesión</a>
             </div>
         </div>
         
@@ -65,23 +65,25 @@
                     <thead class="table-dark">
                         <tr>
                             <th>ID</th>
+                            <th>Codigo</th>
                             <th>Departamento</th>
                             <th>Porcentaje (%)</th>
                             <th>Renta</th>
-                            <th>Costo Administrativo (Renta - %)</th>
+                            <th>Costo Administrativo</th>
                             <th>Ingreso Neto</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for dep in departamentos %}
+                        {% for dep in inmuebles %}
                         <tr>
                             <td>{{ dep.id }} <input type="hidden" name="id" value="{{ dep.id }}"></td>
-                            <td class="fw-bold text-primary">{{ dep.nombre }}</td>
+                            <td class="fw-bold text-primary">{{ dep.codigo }}</td>
+                            <td>{{ dep.descripcion }}</td>
                             <td>
-                                <input type="number" step="0.1" name="porcentaje_{{ dep.id }}" class="form-control" value="{{ dep.porcentaje }}" {% if not editable %}disabled{% endif %}>
+                                <input type="number" step="0.01" min="0" max="100" name="porcentaje_{{ dep.id }}" class="form-control text-end" value="{{ '%.2f'|format(dep.porcentaje) }}" {% if not editable %}disabled{% endif %}>
                             </td>
                             <td>
-                                <input type="number" step="0.01" name="renta_{{ dep.id }}" class="form-control" value="{{ dep.renta }}" {% if not editable %}disabled{% endif %}>
+                                <input type="number" step="0.01" name="renta_{{ dep.id }}" class="form-control" value="{{ dep.monto_renta }}" {% if not editable %}disabled{% endif %}>
                             </td>
                             <td class="bg-light text-end">
                                 <span class="badge bg-success fs-6">S/. {{ "%.2f"|format(dep.costo_administrativo) }}</span>

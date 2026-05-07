@@ -7,103 +7,127 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-light">
-    <div class="container py-5">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>Análisis Mensual</h2>
-            <a href="{{ url_for('gastos') }}" class="btn btn-outline-secondary">Volver</a>
+<div class="container-fluid py-4 px-4">
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">Análisis Mensual — Últimos 3 Meses</h2>
+        <a href="{{ url_for('gastos') }}" class="btn btn-outline-secondary">Volver</a>
+    </div>
+
+    <!-- Tarjetas resumen por mes -->
+    <div class="row mb-4">
+        {% for m in months_data %}
+        <div class="col-md-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-header fw-bold">{{ m.label }}</div>
+                <div class="card-body">
+                    <p class="mb-1"><strong>Total (PEN):</strong> S/. {{ "%.2f"|format(m.total_pen) }}</p>
+                    <p class="mb-2"><strong>Total (USD):</strong> $ {{ "%.2f"|format(m.total_usd) }}</p>
+                    <table class="table table-sm table-borderless mb-0">
+                        <thead><tr><th class="ps-0 text-muted small">Categoría</th><th class="text-end text-muted small">S/.</th></tr></thead>
+                        <tbody>
+                            {% for cat in all_categories %}
+                            {% if m.by_category[cat] > 0 %}
+                            <tr>
+                                <td class="ps-0 small">{{ cat }}</td>
+                                <td class="text-end small">{{ "%.2f"|format(m.by_category[cat]) }}</td>
+                            </tr>
+                            {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
+        {% endfor %}
+    </div>
 
-        <div class="row">
-            <div class="col-md-6">
-                <div class="card shadow-sm mb-4">
-                    <div class="card-body">
-                        <h5>Mes de {{ start_of_month.strftime('%B %Y') }}</h5>
-                        <p><strong>Total Gastos (PEN):</strong> S/. {{ "%.2f"|format(total_mes) }}</p>
-                        <p><strong>Total Gastos (USD):</strong> $ {{ "%.2f"|format(total_mes_usd) }}</p>
-                    </div>
-                </div>
-
-                <div class="card shadow-sm">
-                    <div class="card-body">
-                        <h5 class="card-title">Lista de Gastos del Mes</h5>
-                        <div class="table-responsive">
-                            <table class="table table-striped">
-                                <thead>
-                                    <tr>
-                                        <th>ID</th>
-                                        <th>Fecha</th>
-                                        <th>Nombre Gasto</th>
-                                        <th>Descripción</th>
-                                        <th>Categoría</th>
-                                        <th>Costo</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for gasto in gastos %}
-                                    <tr>
-                                        <td>{{ gasto.id }}</td>
-                                        <td>{{ gasto.fecha }}</td>
-                                        <td>{{ gasto.nombre_gasto }}</td>
-                                        <td>{{ gasto.descripcion }}</td>
-                                        <td>{{ gasto.categoria }}</td>
-                                        <td>S/. {{ "%.2f"|format(gasto.costo) }}</td>
-                                    </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-6">
-                <div class="card shadow-sm">
-                    <div class="card-body">
-                        <canvas id="gastosChart"></canvas>
-                    </div>
-                </div>
-            </div>
+    <!-- Gráfico agrupado por categoría -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header fw-bold">Gasto por Categoría — Comparativo 3 Meses</div>
+        <div class="card-body">
+            <canvas id="catChart" style="max-height:380px;"></canvas>
         </div>
     </div>
 
-    <script>
-        const ctx = document.getElementById('gastosChart').getContext('2d');
-        const gastosChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: {{ labels | tojson }},
-                datasets: [{
-                    label: 'Gastos en Soles (PEN)',
-                    data: {{ data_pen | tojson }},
-                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
-                    borderColor: 'rgba(255, 99, 132, 1)',
-                    borderWidth: 1
-                }, {
-                    label: 'Gastos en Dólares (USD)',
-                    data: {{ data_usd | tojson }},
-                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                    borderColor: 'rgba(54, 162, 235, 1)',
-                    borderWidth: 1
-                }]
+    <!-- Detalle de gastos por mes -->
+    {% for m in months_data %}
+    <div class="card shadow-sm mb-4">
+        <div class="card-header fw-bold">Detalle: {{ m.label }} ({{ m.gastos|length }} registros)</div>
+        <div class="card-body p-0">
+            {% if m.gastos %}
+            <div class="table-responsive">
+                <table class="table table-striped table-sm mb-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Nombre</th>
+                            <th>Descripción</th>
+                            <th>Categoría</th>
+                            <th class="text-end">S/.</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for g in m.gastos %}
+                        <tr>
+                            <td>{{ g.fecha }}</td>
+                            <td>{{ g.nombre_gasto }}</td>
+                            <td>{{ g.descripcion or '—' }}</td>
+                            <td><span class="badge bg-secondary">{{ g.categoria or 'Sin categoría' }}</span></td>
+                            <td class="text-end">{{ "%.2f"|format(g.costo) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <td colspan="4" class="text-end fw-bold">Total</td>
+                            <td class="text-end fw-bold">{{ "%.2f"|format(m.total_pen) }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted p-3 mb-0">Sin gastos registrados este mes.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+
+</div>
+
+<script>
+    const categories = {{ all_categories | tojson }};
+    const monthsData = {{ months_data | map(attribute='by_category') | list | tojson }};
+    const monthLabels = {{ months_data | map(attribute='label') | list | tojson }};
+
+    const colors = [
+        { bg: 'rgba(255,99,132,0.6)',  border: 'rgba(255,99,132,1)' },
+        { bg: 'rgba(54,162,235,0.6)',  border: 'rgba(54,162,235,1)' },
+        { bg: 'rgba(75,192,192,0.6)',  border: 'rgba(75,192,192,1)' },
+    ];
+
+    const datasets = monthLabels.map((label, i) => ({
+        label: label,
+        data: categories.map(cat => monthsData[i][cat] || 0),
+        backgroundColor: colors[i].bg,
+        borderColor: colors[i].border,
+        borderWidth: 1,
+    }));
+
+    new Chart(document.getElementById('catChart').getContext('2d'), {
+        type: 'bar',
+        data: { labels: categories, datasets: datasets },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'top' },
+                title: { display: false }
             },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: {
-                        position: 'top',
-                    },
-                    title: {
-                        display: true,
-                        text: 'Gastos Mensuales por Día'
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
+            scales: {
+                y: { beginAtZero: true, title: { display: true, text: 'Soles (PEN)' } }
             }
-        });
-    </script>
+        }
+    });
+</script>
 </body>
 </html>

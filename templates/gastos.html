@@ -14,9 +14,7 @@
             </div>
             <div>
                 <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">Volver al Panel</a>
-                {% if editable %}
                 <a href="{{ url_for('logout') }}" class="btn btn-secondary ms-2">Cerrar Sesión</a>
-                {% endif %}
             </div>
         </div>
 
@@ -42,7 +40,7 @@
                 {% if editable %}
                 <a href="{{ url_for('add_gasto') }}" class="btn btn-primary w-100 mb-2">Añadir Nuevo Gasto</a>
                 {% else %}
-                <a href="{{ url_for('login') }}" class="btn btn-primary w-100 mb-2">Iniciar Sesión para Añadir</a>
+                <button type="button" class="btn btn-outline-secondary w-100 mb-2" disabled>Solo administrador puede añadir</button>
                 {% endif %}
             </div>
             <div class="col-md-4">

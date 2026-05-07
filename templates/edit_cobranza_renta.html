@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Editar Cobranza de Renta</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <a href="{{ url_for('cobranzas_rentas') }}" class="btn btn-outline-secondary mb-4">Volver</a>
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h3 class="mb-4">Editar Cobranza #{{ entry.id }}</h3>
+                <form method="POST">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Inmueble</label>
+                            <select name="inmueble" class="form-select" required>
+                                <option value="1P" {% if entry.inmueble == '1P' %}selected{% endif %}>1P</option>
+                                <option value="3A" {% if entry.inmueble == '3A' %}selected{% endif %}>3A</option>
+                                <option value="3B" {% if entry.inmueble == '3B' %}selected{% endif %}>3B</option>
+                                <option value="3C" {% if entry.inmueble == '3C' %}selected{% endif %}>3C</option>
+                                <option value="4A" {% if entry.inmueble == '4A' %}selected{% endif %}>4A</option>
+                                <option value="4B" {% if entry.inmueble == '4B' %}selected{% endif %}>4B</option>
+                                <option value="4C" {% if entry.inmueble == '4C' %}selected{% endif %}>4C</option>
+                                <option value="5A" {% if entry.inmueble == '5A' %}selected{% endif %}>5A</option>
+                                <option value="2Psjm" {% if entry.inmueble == '2Psjm' %}selected{% endif %}>2Psjm</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Inquilino</label>
+                            <input type="text" name="inquilino" class="form-control" value="{{ entry.inquilino or '' }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Período</label>
+                            <input type="text" name="periodo" class="form-control" value="{{ entry.periodo }}" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Fecha Vencimiento</label>
+                            <input type="date" name="vencimiento" class="form-control" value="{{ entry.vencimiento or '' }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Fecha Pago</label>
+                            <input type="date" name="fecha_pago" class="form-control" value="{{ entry.fecha_pago or '' }}">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Monto</label>
+                            <input type="number" step="0.01" min="0" name="monto" class="form-control" value="{{ entry.monto }}" required>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Monto Pagado</label>
+                            <input type="number" step="0.01" min="0" name="monto_pagado" class="form-control" value="{{ entry.monto_pagado }}" required>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Estado</label>
+                            <select name="estado" class="form-select">
+                                <option value="Pendiente" {% if entry.estado == 'Pendiente' %}selected{% endif %}>Pendiente</option>
+                                <option value="Parcial" {% if entry.estado == 'Parcial' %}selected{% endif %}>Parcial</option>
+                                <option value="Pagado" {% if entry.estado == 'Pagado' %}selected{% endif %}>Pagado</option>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Observación</label>
+                            <textarea name="observacion" class="form-control" rows="2">{{ entry.observacion or '' }}</textarea>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <button type="submit" class="btn btn-warning">Guardar Cambios</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
