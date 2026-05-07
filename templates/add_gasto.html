@@ -36,7 +36,6 @@
                         <label for="categoria" class="form-label">Categoría</label>
                         <select class="form-select" id="categoria" name="categoria" required>
                             <option value="Transporte" {% if categoria == 'Transporte' %}selected{% endif %}>Transporte</option>
-                            <option value="Alimentación" {% if categoria == 'Alimentación' %}selected{% endif %}>Alimentación</option>
                             <option value="Entretenimiento" {% if categoria == 'Entretenimiento' %}selected{% endif %}>Entretenimiento</option>
                             <option value="Alimentos" {% if categoria == 'Alimentos' %}selected{% endif %}>Alimentos</option>
                             <option value="Ropa" {% if categoria == 'Ropa' %}selected{% endif %}>Ropa</option>
@@ -47,6 +46,10 @@
                             <option value="Impuestos_Tributos" {% if categoria == 'Impuestos_Tributos' %}selected{% endif %}>Impuestos_Tributos</option>
                             <option value="Father" {% if categoria == 'Father' %}selected{% endif %}>Father</option>
                             <option value="Insumos_Generales" {% if categoria == 'Insumos_Generales' %}selected{% endif %}>Insumos_Generales</option>
+                            <option value="Despensa" {% if categoria == 'Despensa' %}selected{% endif %}>Despensa</option>
+                            <option value="Limpieza_Higiene_Lavanderia" {% if categoria == 'Limpieza_Higiene_Lavanderia' %}selected{% endif %}>Limpieza_Higiene_Lavanderia</option>
+                            <option value="Servicios" {% if categoria == 'Servicios' %}selected{% endif %}>Servicios</option>
+                            <option value="Mejoras_Generales" {% if categoria == 'Mejoras_Generales' %}selected{% endif %}>Mejoras_Generales</option>
                             <option value="Otros" {% if categoria == 'Otros' %}selected{% endif %}>Otros</option>
                         </select>
                     </div>
