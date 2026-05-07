@@ -79,8 +79,13 @@
                                 <td>{{ gasto.categoria }}</td>
                                 <td>S/. {{ "%.2f"|format(gasto.costo) }}</td>
                                 {% if editable %}
-                                <td>
-                                    <a href="{{ url_for('edit_gasto', gasto_id=gasto.id) }}" class="btn btn-sm btn-warning">Editar</a>
+                                <td class="text-nowrap">
+                                    <div class="btn-group btn-group-sm d-flex" role="group" aria-label="Acciones de gasto">
+                                        <a href="{{ url_for('edit_gasto', gasto_id=gasto.id) }}" class="btn btn-warning flex-fill text-center">Editar</a>
+                                        <form method="POST" action="{{ url_for('delete_gasto', gasto_id=gasto.id) }}" class="d-inline-flex flex-fill" onsubmit="return confirm('¿Seguro que deseas eliminar este gasto?');">
+                                            <button type="submit" class="btn btn-danger w-100">Eliminar</button>
+                                        </form>
+                                    </div>
                                 </td>
                                 {% endif %}
                             </tr>

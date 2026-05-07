@@ -1151,6 +1151,21 @@ def edit_gasto(gasto_id):
 
     return render_template('edit_gasto.html', gasto=gasto, error=None)
 
+
+@app.route('/gastos/<int:gasto_id>/delete', methods=['POST'])
+def delete_gasto(gasto_id):
+    if not is_admin():
+        return redirect(url_for('gastos'))
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    p = get_placeholder()
+    cur.execute(f'DELETE FROM gastos WHERE id={p}', (gasto_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return redirect(url_for('gastos'))
+
 @app.route('/tributos-sjm')
 def tributos_sjm():
     return render_template('tributos_sjm.html')
