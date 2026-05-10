@@ -451,6 +451,7 @@
             <a href="{{ url_for('add_cobranza_renta') if editable else '#' }}" class="menu-link {% if not editable %}disabled{% endif %}">💳 {{ 'Registrar Pago' if editable else 'Solo administrador puede registrar' }}</a>
             <a href="{{ url_for('cobranzas_rentas', view='historial') }}" class="menu-link {% if view_mode == 'historial' %}active{% endif %}">📋 Historial de Pagos</a>
             <a href="{{ url_for('cobranzas_rentas', view='inmuebles') }}" class="menu-link {% if view_mode == 'inmuebles' %}active{% endif %}">🏢 Inmuebles</a>
+            <a href="{{ url_for('cobranzas_rentas', view='inquilinos') }}" class="menu-link {% if view_mode == 'inquilinos' %}active{% endif %}">👥 Inquilinos</a>
 
             <div>
                 <a href="{{ url_for('index') }}" class="btn btn-outline-light w-100 mb-2">Volver al Panel</a>
@@ -666,6 +667,49 @@
                                 {% if not inmuebles_rows %}
                                 <tr>
                                     <td colspan="8" class="text-center text-muted py-4">No hay inmuebles registrados.</td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                            {% elif view_mode == 'inquilinos' %}
+                            <thead>
+                                <tr>
+                                    <th>Nombre</th>
+                                    <th>DNI</th>
+                                    <th>Telefono</th>
+                                    <th>Email</th>
+                                    <th>Inmueble</th>
+                                    <th>Descripcion inmueble</th>
+                                    <th>Estado contrato</th>
+                                    <th class="text-end">Renta mensual</th>
+                                    {% if editable %}
+                                    <th class="text-end">Acciones</th>
+                                    {% endif %}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in inquilinos_rows %}
+                                <tr>
+                                    <td>{{ row.nombre or '-' }}</td>
+                                    <td>{{ row.dni or '-' }}</td>
+                                    <td>{{ row.telefono or '-' }}</td>
+                                    <td>{{ row.email or '-' }}</td>
+                                    <td>{{ row.inmueble_codigo or '-' }}</td>
+                                    <td>{{ row.inmueble_descripcion or '-' }}</td>
+                                    <td>{{ row.contrato_estado or '-' }}</td>
+                                    <td class="text-end">S/ {{ "%.2f"|format(row.monto_mensual or 0) }}</td>
+                                    {% if editable %}
+                                    <td class="text-end">
+                                        <a href="{{ url_for('edit_inquilino_cobranzas', inquilino_id=row.id) }}" class="btn btn-sm btn-outline-primary me-1">Editar</a>
+                                        <form method="POST" action="{{ url_for('delete_inquilino_cobranzas', inquilino_id=row.id) }}" class="d-inline" onsubmit="return confirm('¿Eliminar este inquilino? Esta accion libera su inmueble y finaliza sus contratos.');">
+                                            <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
+                                        </form>
+                                    </td>
+                                    {% endif %}
+                                </tr>
+                                {% endfor %}
+                                {% if not inquilinos_rows %}
+                                <tr>
+                                    <td colspan="{{ 9 if editable else 8 }}" class="text-center text-muted py-4">No hay inquilinos registrados.</td>
                                 </tr>
                                 {% endif %}
                             </tbody>

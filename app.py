@@ -1170,10 +1170,36 @@ def delete_gasto(gasto_id):
 def tributos_sjm():
     return render_template('tributos_sjm.html')
 
+
+def sync_inmuebles_estado(conn, inmueble_ids):
+    """Sincroniza estado de inmuebles segun si tienen contratos activos."""
+    ids = sorted({int(i) for i in inmueble_ids if i})
+    if not ids:
+        return
+
+    p = get_placeholder()
+    read_cur = get_cursor(conn)
+    write_cur = conn.cursor()
+    for inmueble_id in ids:
+        read_cur.execute(
+            f'''SELECT 1 FROM contratos
+                WHERE inmueble_id={p} AND LOWER(COALESCE(estado, ''))='activo'
+                LIMIT 1''',
+            (inmueble_id,)
+        )
+        has_active = bool(read_cur.fetchone())
+        write_cur.execute(
+            f'UPDATE inmuebles SET estado={p} WHERE id={p}',
+            ('Alquilado' if has_active else 'Disponible', inmueble_id)
+        )
+
+    read_cur.close()
+    write_cur.close()
+
 @app.route('/cobranzas-rentas')
 def cobranzas_rentas():
     view_mode = (request.args.get('view') or 'dashboard').strip().lower()
-    if view_mode not in {'dashboard', 'historial', 'inmuebles'}:
+    if view_mode not in {'dashboard', 'historial', 'inmuebles', 'inquilinos'}:
         view_mode = 'dashboard'
 
     historial_periodo = (request.args.get('periodo') or '').strip()
@@ -1256,6 +1282,60 @@ def cobranzas_rentas():
     if historial_estado:
         historial_rows = [r for r in historial_rows if (r['estado'] or '').strip().lower() == historial_estado]
 
+    cur.execute(
+        """
+        SELECT c.id, c.inquilino_id, c.inmueble_id, c.estado, c.monto_mensual,
+               i.codigo AS inmueble_codigo, i.descripcion AS inmueble_descripcion,
+               q.nombre AS inquilino_nombre
+        FROM contratos c
+        LEFT JOIN inmuebles i ON i.id = c.inmueble_id
+        LEFT JOIN inquilinos q ON q.id = c.inquilino_id
+        ORDER BY c.id DESC
+        """
+    )
+    contratos_rows = cur.fetchall()
+
+    cur.execute('SELECT id, nombre, dni, telefono, email FROM inquilinos ORDER BY nombre ASC, id ASC')
+    inquilinos = cur.fetchall()
+
+    inquilino_activo_por_inmueble = {}
+    contrato_por_inquilino = {}
+    for contrato in contratos_rows:
+        estado_contrato = (contrato['estado'] or '').strip().lower()
+
+        inmueble_codigo = (contrato['inmueble_codigo'] or '').strip().lower()
+        if estado_contrato == 'activo' and inmueble_codigo and inmueble_codigo not in inquilino_activo_por_inmueble:
+            inquilino_activo_por_inmueble[inmueble_codigo] = contrato['inquilino_nombre']
+
+        inquilino_id = contrato['inquilino_id']
+        if not inquilino_id:
+            continue
+
+        existente = contrato_por_inquilino.get(inquilino_id)
+        if not existente:
+            contrato_por_inquilino[inquilino_id] = contrato
+            continue
+
+        estado_existente = (existente['estado'] or '').strip().lower()
+        if estado_contrato == 'activo' and estado_existente != 'activo':
+            contrato_por_inquilino[inquilino_id] = contrato
+
+    inquilinos_rows = []
+    for inquilino in inquilinos:
+        contrato = contrato_por_inquilino.get(inquilino['id'])
+        inquilinos_rows.append({
+            'id': inquilino['id'],
+            'nombre': inquilino['nombre'],
+            'dni': inquilino['dni'],
+            'telefono': inquilino['telefono'],
+            'email': inquilino['email'],
+            'inmueble_id': contrato['inmueble_id'] if contrato else None,
+            'inmueble_codigo': contrato['inmueble_codigo'] if contrato else None,
+            'inmueble_descripcion': contrato['inmueble_descripcion'] if contrato else None,
+            'contrato_estado': contrato['estado'] if contrato else None,
+            'monto_mensual': contrato['monto_mensual'] if contrato else 0,
+        })
+
     inmuebles_rows = []
     for inmueble in inmuebles:
         codigo = (inmueble['codigo'] or '').strip()
@@ -1276,7 +1356,7 @@ def cobranzas_rentas():
             'descripcion': inmueble['descripcion'],
             'estado': inmueble['estado'],
             'monto_renta': inmueble['monto_renta'],
-            'inquilino': latest['inquilino'] if latest else None,
+            'inquilino': inquilino_activo_por_inmueble.get(codigo.lower()) or (latest['inquilino'] if latest else None),
             'periodo': latest['periodo'] if latest else None,
             'estado_pago': latest['estado'] if latest else None,
             'monto_pagado': latest['monto_pagado'] if latest else 0,
@@ -1331,6 +1411,9 @@ def cobranzas_rentas():
     elif view_mode == 'inmuebles':
         panel_title = 'Listado de inmuebles'
         total_registros = len(inmuebles_rows)
+    elif view_mode == 'inquilinos':
+        panel_title = 'Listado de inquilinos y su inmueble'
+        total_registros = len(inquilinos_rows)
     else:
         panel_title = f'Inmuebles con retraso o pendiente - {MESES_ES[today.month - 1].capitalize()} {today.year}'
         total_registros = pendientes_count
@@ -1352,6 +1435,7 @@ def cobranzas_rentas():
         pendientes_rows=pendientes_periodo,
         historial_rows=historial_rows,
         inmuebles_rows=inmuebles_rows,
+        inquilinos_rows=inquilinos_rows,
         view_mode=view_mode,
         panel_title=panel_title,
         historial_periodos=historial_periodos,
@@ -1434,6 +1518,158 @@ def add_cobranza_renta():
         fecha_default=today.isoformat(),
         periodo_default=f'{today.year}-{today.month:02d}'
     )
+
+
+@app.route('/cobranzas-rentas/inquilinos/<int:inquilino_id>/edit', methods=['GET', 'POST'])
+def edit_inquilino_cobranzas(inquilino_id):
+    if not is_admin():
+        return redirect(url_for('cobranzas_rentas', view='inquilinos'))
+
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+
+    cur.execute(f'SELECT id, nombre, dni, telefono, email FROM inquilinos WHERE id={p}', (inquilino_id,))
+    inquilino = cur.fetchone()
+    if not inquilino:
+        cur.close()
+        conn.close()
+        return redirect(url_for('cobranzas_rentas', view='inquilinos'))
+
+    cur.execute(
+        f'''SELECT id, inmueble_id FROM contratos
+            WHERE inquilino_id={p} AND LOWER(COALESCE(estado, ''))='activo'
+            ORDER BY id DESC LIMIT 1''',
+        (inquilino_id,)
+    )
+    contrato_activo = cur.fetchone()
+    inmueble_actual_id = contrato_activo['inmueble_id'] if contrato_activo else None
+
+    cur.execute('SELECT id, codigo, descripcion, estado, monto_renta FROM inmuebles ORDER BY codigo ASC')
+    inmuebles = cur.fetchall()
+
+    if request.method == 'POST':
+        selected_inmueble_raw = (request.form.get('inmueble_id') or '').strip()
+        selected_inmueble_id = int(selected_inmueble_raw) if selected_inmueble_raw.isdigit() else None
+        today_iso = datetime.date.today().isoformat()
+
+        write_cur = conn.cursor()
+        write_cur.execute(
+            f'UPDATE inquilinos SET nombre={p}, dni={p}, telefono={p}, email={p} WHERE id={p}',
+            (
+                (request.form.get('nombre') or '').strip(),
+                (request.form.get('dni') or '').strip() or None,
+                (request.form.get('telefono') or '').strip() or None,
+                (request.form.get('email') or '').strip() or None,
+                inquilino_id,
+            )
+        )
+
+        affected_inmuebles = set()
+        if inmueble_actual_id:
+            affected_inmuebles.add(inmueble_actual_id)
+
+        if selected_inmueble_id:
+            affected_inmuebles.add(selected_inmueble_id)
+            write_cur.execute(
+                f'''UPDATE contratos
+                    SET estado={p}, fecha_fin={p}
+                    WHERE inmueble_id={p} AND LOWER(COALESCE(estado, ''))='activo' AND COALESCE(inquilino_id, 0) <> {p}''',
+                ('Finalizado', today_iso, selected_inmueble_id, inquilino_id)
+            )
+
+        if selected_inmueble_id:
+            write_cur.execute(
+                f'''UPDATE contratos
+                    SET estado={p}, fecha_fin={p}
+                    WHERE inquilino_id={p}
+                    AND LOWER(COALESCE(estado, ''))='activo'
+                    AND inmueble_id <> {p}''',
+                ('Finalizado', today_iso, inquilino_id, selected_inmueble_id)
+            )
+        else:
+            write_cur.execute(
+                f'UPDATE contratos SET estado={p}, fecha_fin={p} WHERE inquilino_id={p} AND LOWER(COALESCE(estado, \'\'))=\'activo\'',
+                ('Finalizado', today_iso, inquilino_id)
+            )
+
+        if selected_inmueble_id:
+            write_cur.execute(
+                f'''SELECT id FROM contratos
+                    WHERE inquilino_id={p} AND inmueble_id={p} AND LOWER(COALESCE(estado, ''))='activo'
+                    ORDER BY id DESC LIMIT 1''',
+                (inquilino_id, selected_inmueble_id)
+            )
+            existing_same = write_cur.fetchone()
+            if not existing_same:
+                write_cur.execute(
+                    f'SELECT monto_renta FROM inmuebles WHERE id={p}',
+                    (selected_inmueble_id,)
+                )
+                inmueble_sel = write_cur.fetchone()
+                monto_mensual = float((inmueble_sel[0] if inmueble_sel else 0) or 0)
+                write_cur.execute(
+                    f'''INSERT INTO contratos
+                        (inmueble_id, inquilino_id, fecha_inicio, fecha_fin, monto_mensual, dia_pago, estado, observacion)
+                        VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})''',
+                    (selected_inmueble_id, inquilino_id, today_iso, None, monto_mensual, 1, 'Activo', 'Asignado desde gestor de cobranzas')
+                )
+
+        sync_inmuebles_estado(conn, affected_inmuebles)
+        conn.commit()
+        write_cur.close()
+        cur.close()
+        conn.close()
+        return redirect(url_for('cobranzas_rentas', view='inquilinos'))
+
+    cur.close()
+    conn.close()
+    return render_template(
+        'edit_inquilino_cobranza.html',
+        inquilino=inquilino,
+        inmuebles=inmuebles,
+        inmueble_actual_id=inmueble_actual_id,
+    )
+
+
+@app.route('/cobranzas-rentas/inquilinos/<int:inquilino_id>/delete', methods=['POST'])
+def delete_inquilino_cobranzas(inquilino_id):
+    if not is_admin():
+        return redirect(url_for('cobranzas_rentas', view='inquilinos'))
+
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+    today_iso = datetime.date.today().isoformat()
+
+    cur.execute(f'SELECT id FROM inquilinos WHERE id={p}', (inquilino_id,))
+    if not cur.fetchone():
+        cur.close()
+        conn.close()
+        return redirect(url_for('cobranzas_rentas', view='inquilinos'))
+
+    cur.execute(f'SELECT inmueble_id FROM contratos WHERE inquilino_id={p}', (inquilino_id,))
+    affected_inmuebles = {
+        row['inmueble_id']
+        for row in cur.fetchall()
+        if row['inmueble_id']
+    }
+
+    write_cur = conn.cursor()
+    write_cur.execute(
+        f'''UPDATE contratos
+            SET inquilino_id={p}, estado={p}, fecha_fin={p}
+            WHERE inquilino_id={p}''',
+        (None, 'Finalizado', today_iso, inquilino_id)
+    )
+    write_cur.execute(f'DELETE FROM inquilinos WHERE id={p}', (inquilino_id,))
+
+    sync_inmuebles_estado(conn, affected_inmuebles)
+    conn.commit()
+    write_cur.close()
+    cur.close()
+    conn.close()
+    return redirect(url_for('cobranzas_rentas', view='inquilinos'))
 
 
 @app.route('/cobranzas-rentas/<int:entry_id>/edit', methods=['GET', 'POST'])
