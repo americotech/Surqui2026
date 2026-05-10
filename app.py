@@ -1196,6 +1196,70 @@ def sync_inmuebles_estado(conn, inmueble_ids):
     read_cur.close()
     write_cur.close()
 
+
+def get_inmueble_renta(conn, codigo_inmueble):
+    """Obtiene la renta del inmueble por codigo. Si no existe, retorna 0.0."""
+    if not codigo_inmueble:
+        return 0.0
+
+    p = get_placeholder()
+    cur = get_cursor(conn)
+    cur.execute(
+        f'''SELECT monto_renta
+            FROM inmuebles
+            WHERE LOWER(COALESCE(codigo, '')) = LOWER({p})
+            LIMIT 1''',
+        (str(codigo_inmueble).strip(),)
+    )
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        return 0.0
+
+    try:
+        value = row['monto_renta']
+    except Exception:
+        value = row[0]
+    return float(value or 0.0)
+
+
+def sync_cobranzas_montos_with_inmuebles(conn):
+    """Sincroniza gestor_cobranzas.monto con inmuebles.monto_renta por codigo de inmueble."""
+    p = get_placeholder()
+    read_cur = get_cursor(conn)
+    write_cur = conn.cursor()
+
+    read_cur.execute('SELECT codigo, monto_renta FROM inmuebles')
+    inmuebles_rows = read_cur.fetchall()
+    renta_by_codigo = {}
+    for row in inmuebles_rows:
+        codigo = (row['codigo'] or '').strip().lower()
+        if not codigo:
+            continue
+        renta_by_codigo[codigo] = float(row['monto_renta'] or 0.0)
+
+    read_cur.execute('SELECT id, inmueble, monto FROM gestor_cobranzas')
+    cobranzas_rows = read_cur.fetchall()
+
+    updated = 0
+    for row in cobranzas_rows:
+        inmueble_key = (row['inmueble'] or '').strip().lower()
+        if not inmueble_key or inmueble_key not in renta_by_codigo:
+            continue
+
+        monto_real = float(renta_by_codigo[inmueble_key] or 0.0)
+        monto_actual = float(row['monto'] or 0.0)
+        if abs(monto_actual - monto_real) > 0.0001:
+            write_cur.execute(
+                f'UPDATE gestor_cobranzas SET monto={p} WHERE id={p}',
+                (monto_real, row['id'])
+            )
+            updated += 1
+
+    read_cur.close()
+    write_cur.close()
+    return updated
+
 @app.route('/cobranzas-rentas')
 def cobranzas_rentas():
     view_mode = (request.args.get('view') or 'dashboard').strip().lower()
@@ -1209,6 +1273,10 @@ def cobranzas_rentas():
     conn = get_db_connection()
     cur = get_cursor(conn)
     dolar = get_dolar_rate(conn, cur)
+
+    updated_rows = sync_cobranzas_montos_with_inmuebles(conn)
+    if updated_rows:
+        conn.commit()
 
     cur.execute('SELECT * FROM gestor_cobranzas ORDER BY vencimiento ASC, id ASC')
     rows = cur.fetchall()
@@ -1506,16 +1574,18 @@ def add_cobranza_renta():
         conn = get_db_connection()
         cur = conn.cursor()
         p = get_placeholder()
+        inmueble_codigo = (request.form.get('inmueble') or '').strip()
+        monto_real = get_inmueble_renta(conn, inmueble_codigo)
         cur.execute(
             f'''INSERT INTO gestor_cobranzas
                 (inmueble, inquilino, periodo, vencimiento, monto, monto_pagado, estado, fecha_pago, observacion)
                 VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})''',
             (
-                request.form.get('inmueble'),
+                inmueble_codigo,
                 request.form.get('inquilino'),
                 request.form.get('periodo'),
                 request.form.get('vencimiento') or None,
-                to_float(request.form.get('monto') or 0),
+                monto_real,
                 to_float(request.form.get('monto_pagado') or 0),
                 request.form.get('estado') or 'Pendiente',
                 request.form.get('fecha_pago') or None,
@@ -1697,17 +1767,19 @@ def edit_cobranza_renta(entry_id):
     p = get_placeholder()
 
     if request.method == 'POST':
+        inmueble_codigo = (request.form.get('inmueble') or '').strip()
+        monto_real = get_inmueble_renta(conn, inmueble_codigo)
         cur.execute(
             f'''UPDATE gestor_cobranzas
                 SET inmueble={p}, inquilino={p}, periodo={p}, vencimiento={p},
                     monto={p}, monto_pagado={p}, estado={p}, fecha_pago={p}, observacion={p}
                 WHERE id={p}''',
             (
-                request.form.get('inmueble'),
+                inmueble_codigo,
                 request.form.get('inquilino'),
                 request.form.get('periodo'),
                 request.form.get('vencimiento') or None,
-                to_float(request.form.get('monto') or 0),
+                monto_real,
                 to_float(request.form.get('monto_pagado') or 0),
                 request.form.get('estado') or 'Pendiente',
                 request.form.get('fecha_pago') or None,
