@@ -30,7 +30,8 @@
                         </div>
                         <div class="col-md-4">
                             <label class="form-label">Inquilino</label>
-                            <input type="text" name="inquilino" class="form-control">
+                            <input type="text" name="inquilino" class="form-control" id="inquilino-field" readonly>
+                            <small class="text-muted" id="inquilino-status"></small>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label">Período</label>
@@ -72,5 +73,44 @@
             </div>
         </div>
     </div>
+
+    <script>
+        // Llenar automáticamente el inquilino cuando se selecciona un inmueble
+        document.addEventListener('DOMContentLoaded', function() {
+            const inmuebleSelect = document.querySelector('select[name="inmueble"]');
+            const inquilinoField = document.getElementById('inquilino-field');
+            const inquilinoStatus = document.getElementById('inquilino-status');
+
+            inmuebleSelect.addEventListener('change', async function() {
+                const codigo = this.value;
+                
+                if (!codigo) {
+                    inquilinoField.value = '';
+                    inquilinoStatus.textContent = '';
+                    return;
+                }
+
+                try {
+                    inquilinoStatus.textContent = 'Cargando...';
+                    const response = await fetch(`/api/get-inquilino/${encodeURIComponent(codigo)}`);
+                    const data = await response.json();
+                    
+                    if (data.success && data.inquilino) {
+                        inquilinoField.value = data.inquilino;
+                        inquilinoStatus.textContent = '✓ Inquilino obtenido del contrato activo';
+                        inquilinoStatus.style.color = 'green';
+                    } else {
+                        inquilinoField.value = '';
+                        inquilinoStatus.textContent = '✗ ' + (data.message || 'No se encontró inquilino');
+                        inquilinoStatus.style.color = 'red';
+                    }
+                } catch (error) {
+                    inquilinoField.value = '';
+                    inquilinoStatus.textContent = '✗ Error al obtener inquilino: ' + error.message;
+                    inquilinoStatus.style.color = 'red';
+                }
+            });
+        });
+    </script>
 </body>
 </html>

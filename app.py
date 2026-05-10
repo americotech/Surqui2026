@@ -1218,6 +1218,25 @@ def cobranzas_rentas():
         if (r['estado'] or '').lower() != 'pagado' or float(r['monto_pagado'] or 0) < float(r['monto'] or 0)
     ]
 
+    # Unifica pendientes por inmueble para evitar duplicados del mismo mes.
+    pendientes_por_inmueble = {}
+    pendientes_sin_inmueble = []
+    for row in pendientes_periodo:
+        inmueble_key = (row['inmueble'] or '').strip().lower()
+        if not inmueble_key:
+            pendientes_sin_inmueble.append(row)
+            continue
+        existing = pendientes_por_inmueble.get(inmueble_key)
+        if not existing or int(row['id'] or 0) > int(existing['id'] or 0):
+            pendientes_por_inmueble[inmueble_key] = row
+
+    pendientes_periodo = list(pendientes_por_inmueble.values()) + pendientes_sin_inmueble
+    pendientes_periodo = sorted(
+        pendientes_periodo,
+        key=lambda r: (str(r['vencimiento'] or ''), int(r['id'] or 0)),
+    )
+    pendientes_count = len(pendientes_periodo)
+
     historial_rows = sorted(
         rows,
         key=lambda r: ((r['periodo'] or ''), str(r['vencimiento'] or ''), r['id']),
@@ -1314,7 +1333,7 @@ def cobranzas_rentas():
         total_registros = len(inmuebles_rows)
     else:
         panel_title = f'Inmuebles con retraso o pendiente - {MESES_ES[today.month - 1].capitalize()} {today.year}'
-        total_registros = len(pendientes_periodo)
+        total_registros = pendientes_count
 
     fecha_hoy = format_spanish_datetime(today)
     periodo_titulo = f"{MESES_ES[today.month - 1].capitalize()} {today.year}"
@@ -1329,7 +1348,7 @@ def cobranzas_rentas():
         esperado_mes=esperado_mes,
         recaudado_mes=recaudado_mes,
         porcentaje_cobrado=porcentaje_cobrado,
-        pendientes_count=len(pendientes_periodo),
+        pendientes_count=pendientes_count,
         pendientes_rows=pendientes_periodo,
         historial_rows=historial_rows,
         inmuebles_rows=inmuebles_rows,
@@ -1345,6 +1364,38 @@ def cobranzas_rentas():
         total_registros=total_registros,
         avance_inmuebles=avance_inmuebles,
     )
+
+
+@app.route('/api/get-inquilino/<codigo_inmueble>')
+def api_get_inquilino(codigo_inmueble):
+    """API para obtener el inquilino actual de un inmueble"""
+    try:
+        conn = get_db_connection()
+        cur = get_cursor(conn)
+        p = get_placeholder()
+        
+        # Obtener el inquilino del contrato activo para este inmueble
+        cur.execute(
+            f'''SELECT DISTINCT i.nombre 
+               FROM contratos c
+               JOIN inquilinos i ON i.id = c.inquilino_id
+               JOIN inmuebles im ON im.id = c.inmueble_id
+               WHERE LOWER(COALESCE(im.codigo, '')) = LOWER({p})
+               AND LOWER(COALESCE(c.estado, '')) = 'activo'
+               LIMIT 1''',
+            (codigo_inmueble.strip(),)
+        )
+        result = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if result:
+            inquilino = result['nombre'] if isinstance(result, dict) else result[0]
+            return {'inquilino': inquilino or '', 'success': True}
+        else:
+            return {'inquilino': '', 'success': False, 'message': 'No hay contrato activo'}
+    except Exception as e:
+        return {'inquilino': '', 'success': False, 'message': str(e)}
 
 
 @app.route('/cobranzas-rentas/add', methods=['GET', 'POST'])
