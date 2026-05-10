@@ -1234,6 +1234,59 @@ def cobranzas_rentas():
     today = datetime.date.today()
     periodo_actual = f'{today.year}-{today.month:02d}'
 
+    cur.execute(
+        """
+        SELECT c.id, c.inquilino_id, c.inmueble_id, c.estado, c.monto_mensual,
+               i.codigo AS inmueble_codigo, i.descripcion AS inmueble_descripcion,
+               q.nombre AS inquilino_nombre
+        FROM contratos c
+        LEFT JOIN inmuebles i ON i.id = c.inmueble_id
+        LEFT JOIN inquilinos q ON q.id = c.inquilino_id
+        ORDER BY c.id DESC
+        """
+    )
+    contratos_rows = cur.fetchall()
+
+    cur.execute('SELECT id, nombre, dni, telefono, email FROM inquilinos ORDER BY nombre ASC, id ASC')
+    inquilinos = cur.fetchall()
+
+    inquilino_activo_por_inmueble = {}
+    contrato_por_inquilino = {}
+    for contrato in contratos_rows:
+        estado_contrato = (contrato['estado'] or '').strip().lower()
+
+        inmueble_codigo = (contrato['inmueble_codigo'] or '').strip().lower()
+        if estado_contrato == 'activo' and inmueble_codigo and inmueble_codigo not in inquilino_activo_por_inmueble:
+            inquilino_activo_por_inmueble[inmueble_codigo] = contrato['inquilino_nombre']
+
+        inquilino_id = contrato['inquilino_id']
+        if not inquilino_id:
+            continue
+
+        existente = contrato_por_inquilino.get(inquilino_id)
+        if not existente:
+            contrato_por_inquilino[inquilino_id] = contrato
+            continue
+
+        estado_existente = (existente['estado'] or '').strip().lower()
+        if estado_contrato == 'activo' and estado_existente != 'activo':
+            contrato_por_inquilino[inquilino_id] = contrato
+
+    # Normaliza historial/pendientes con la relacion canonica inmueble -> inquilino activo.
+    rows_relacionados = []
+    for row in rows:
+        if isinstance(row, dict):
+            row_data = dict(row)
+        else:
+            row_data = {key: row[key] for key in row.keys()}
+        inmueble_key = (row_data.get('inmueble') or '').strip().lower()
+        inquilino_canonico = inquilino_activo_por_inmueble.get(inmueble_key)
+        if inquilino_canonico:
+            row_data['inquilino'] = inquilino_canonico
+        rows_relacionados.append(row_data)
+
+    rows = rows_relacionados
+
     rows_periodo = [r for r in rows if (r['periodo'] or '') == periodo_actual]
     esperado_mes = sum(float(r['monto'] or 0) for r in rows_periodo)
     recaudado_mes = sum(float(r['monto_pagado'] or 0) for r in rows_periodo)
@@ -1281,44 +1334,6 @@ def cobranzas_rentas():
         ]
     if historial_estado:
         historial_rows = [r for r in historial_rows if (r['estado'] or '').strip().lower() == historial_estado]
-
-    cur.execute(
-        """
-        SELECT c.id, c.inquilino_id, c.inmueble_id, c.estado, c.monto_mensual,
-               i.codigo AS inmueble_codigo, i.descripcion AS inmueble_descripcion,
-               q.nombre AS inquilino_nombre
-        FROM contratos c
-        LEFT JOIN inmuebles i ON i.id = c.inmueble_id
-        LEFT JOIN inquilinos q ON q.id = c.inquilino_id
-        ORDER BY c.id DESC
-        """
-    )
-    contratos_rows = cur.fetchall()
-
-    cur.execute('SELECT id, nombre, dni, telefono, email FROM inquilinos ORDER BY nombre ASC, id ASC')
-    inquilinos = cur.fetchall()
-
-    inquilino_activo_por_inmueble = {}
-    contrato_por_inquilino = {}
-    for contrato in contratos_rows:
-        estado_contrato = (contrato['estado'] or '').strip().lower()
-
-        inmueble_codigo = (contrato['inmueble_codigo'] or '').strip().lower()
-        if estado_contrato == 'activo' and inmueble_codigo and inmueble_codigo not in inquilino_activo_por_inmueble:
-            inquilino_activo_por_inmueble[inmueble_codigo] = contrato['inquilino_nombre']
-
-        inquilino_id = contrato['inquilino_id']
-        if not inquilino_id:
-            continue
-
-        existente = contrato_por_inquilino.get(inquilino_id)
-        if not existente:
-            contrato_por_inquilino[inquilino_id] = contrato
-            continue
-
-        estado_existente = (existente['estado'] or '').strip().lower()
-        if estado_contrato == 'activo' and estado_existente != 'activo':
-            contrato_por_inquilino[inquilino_id] = contrato
 
     inquilinos_rows = []
     for inquilino in inquilinos:
