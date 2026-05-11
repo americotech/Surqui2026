@@ -95,7 +95,16 @@
             background: #fff;
             border-bottom: 1px solid #dde5f0;
             padding: 14px 20px;
-            display: flex;
+                    {% if error %}
+                    <div class="px-3 pb-2">
+                        <div class="alert alert-danger mb-0" role="alert">{{ error }}</div>
+                    </div>
+                    {% endif %}
+                    {% if message %}
+                    <div class="px-3 pb-2">
+                        <div class="alert alert-success mb-0" role="alert">{{ message }}</div>
+                    </div>
+                    {% endif %}
             justify-content: space-between;
             align-items: center;
             gap: 12px;
@@ -550,6 +559,17 @@
                         <p class="panel-meta">{{ total_registros }} registros</p>
                     </div>
 
+                    {% if error %}
+                    <div class="px-3 pb-2">
+                        <div class="alert alert-danger mb-0" role="alert">{{ error }}</div>
+                    </div>
+                    {% endif %}
+                    {% if message %}
+                    <div class="px-3 pb-2">
+                        <div class="alert alert-success mb-0" role="alert">{{ message }}</div>
+                    </div>
+                    {% endif %}
+
                     {% if view_mode == 'historial' %}
                     <div class="px-3 pb-2">
                         <form method="GET" action="{{ url_for('cobranzas_rentas') }}" class="row g-2 align-items-end">
@@ -583,6 +603,41 @@
                         <div class="mt-2">
                             <a href="{{ url_for('cobranzas_rentas', view='historial') }}" class="btn btn-sm btn-outline-secondary">Limpiar filtros</a>
                         </div>
+                    </div>
+                    {% endif %}
+
+                    {% if view_mode == 'inquilinos' and editable %}
+                    <div class="px-3 pb-3 border-bottom">
+                        <form method="POST" action="{{ url_for('add_inquilino_cobranzas') }}" class="row g-2 align-items-end">
+                            <div class="col-md-3">
+                                <label class="form-label mb-1">Nombre *</label>
+                                <input type="text" name="nombre" class="form-control form-control-sm" required>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label mb-1">DNI</label>
+                                <input type="text" name="dni" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label mb-1">Telefono</label>
+                                <input type="text" name="telefono" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label mb-1">Email</label>
+                                <input type="email" name="email" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label mb-1">Inmueble *</label>
+                                <select name="inmueble_id" class="form-select form-select-sm" required>
+                                    <option value="">Selecciona...</option>
+                                    {% for inmueble in inmuebles %}
+                                    <option value="{{ inmueble.id }}">{{ inmueble.codigo }}{% if inmueble.descripcion %} - {{ inmueble.descripcion }}{% endif %} ({{ inmueble.estado or 'Sin estado' }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-12 d-grid d-md-flex justify-content-md-end">
+                                <button type="submit" class="btn btn-sm btn-success">Agregar inquilino</button>
+                            </div>
+                        </form>
                     </div>
                     {% endif %}
 

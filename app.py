@@ -1131,7 +1131,11 @@ def gastos_mes():
         me = ms.month
         ye = ms.year
         ms_end = datetime.date(ye + 1, 1, 1) if me == 12 else datetime.date(ye, me + 1, 1)
-        month_gastos = [g for g in all_gastos if coerce_date(g['fecha']) is not None and ms <= coerce_date(g['fecha']) < ms_end]
+        month_gastos = [
+            g
+            for g in all_gastos
+            if (fecha_gasto := coerce_date(g['fecha'])) is not None and ms <= fecha_gasto < ms_end
+        ]
         by_cat = {}
         for cat in all_categories:
             by_cat[cat] = sum(float(g['costo'] or 0) for g in month_gastos if (g['categoria'] or 'Sin categoría') == cat)
@@ -1305,6 +1309,8 @@ def cobranzas_rentas():
     view_mode = (request.args.get('view') or 'dashboard').strip().lower()
     if view_mode not in {'dashboard', 'historial', 'inmuebles', 'inquilinos'}:
         view_mode = 'dashboard'
+    message = (request.args.get('msg') or '').strip()
+    error = (request.args.get('err') or '').strip()
 
     historial_periodo = (request.args.get('periodo') or '').strip()
     historial_inquilino = (request.args.get('inquilino') or '').strip()
@@ -1550,6 +1556,8 @@ def cobranzas_rentas():
     return render_template(
         'cobranzas_rentas.html',
         editable=is_admin(),
+        message=message,
+        error=error,
         dolar=dolar,
         esperado_mes=esperado_mes,
         recaudado_mes=recaudado_mes,
@@ -1557,6 +1565,7 @@ def cobranzas_rentas():
         pendientes_count=pendientes_count,
         pendientes_rows=pendientes_periodo,
         historial_rows=historial_rows,
+        inmuebles=inmuebles,
         inmuebles_rows=inmuebles_rows,
         inquilinos_rows=inquilinos_rows,
         view_mode=view_mode,
@@ -1643,6 +1652,134 @@ def add_cobranza_renta():
         fecha_default=today.isoformat(),
         periodo_default=f'{today.year}-{today.month:02d}'
     )
+
+
+@app.route('/cobranzas-rentas/inquilinos/add', methods=['POST'])
+def add_inquilino_cobranzas():
+    if not is_admin():
+        return redirect(url_for('cobranzas_rentas', view='inquilinos'))
+
+    nombre = (request.form.get('nombre') or '').strip()
+    dni = (request.form.get('dni') or '').strip()
+    telefono = (request.form.get('telefono') or '').strip()
+    email = (request.form.get('email') or '').strip()
+    inmueble_raw = (request.form.get('inmueble_id') or '').strip()
+    if not nombre or not inmueble_raw.isdigit():
+        return redirect(url_for('cobranzas_rentas', view='inquilinos', err='Completa nombre e inmueble para registrar el inquilino.'))
+
+    inmueble_id = int(inmueble_raw)
+    today = datetime.date.today()
+    today_iso = today.isoformat()
+    periodo_actual = f'{today.year}-{today.month:02d}'
+
+    conn = get_db_connection()
+    p = get_placeholder()
+    write_cur = conn.cursor()
+
+    try:
+        write_cur.execute(
+            f'''SELECT id FROM inquilinos
+                WHERE LOWER(TRIM(COALESCE(nombre, ''))) = LOWER(TRIM({p}))
+                AND LOWER(TRIM(COALESCE(dni, ''))) = LOWER(TRIM({p}))
+                LIMIT 1''',
+            (nombre, dni)
+        )
+        if write_cur.fetchone():
+            conn.rollback()
+            return redirect(url_for('cobranzas_rentas', view='inquilinos', err='Ya existe un inquilino con el mismo nombre y DNI.'))
+
+        write_cur.execute(f'SELECT codigo, monto_renta FROM inmuebles WHERE id={p}', (inmueble_id,))
+        inmueble_row = write_cur.fetchone()
+        if not inmueble_row:
+            conn.rollback()
+            return redirect(url_for('cobranzas_rentas', view='inquilinos', err='El inmueble seleccionado no existe.'))
+
+        if isinstance(inmueble_row, dict):
+            inmueble_codigo = (inmueble_row.get('codigo') or '').strip()
+            monto_mensual = float(inmueble_row.get('monto_renta') or 0)
+        else:
+            inmueble_codigo = (inmueble_row[0] or '').strip()
+            monto_mensual = float((inmueble_row[1] or 0))
+
+        insert_values = (
+            nombre,
+            dni or None,
+            telefono or None,
+            email or None,
+        )
+        if get_database_url():
+            write_cur.execute(
+                f'INSERT INTO inquilinos (nombre, dni, telefono, email) VALUES ({p}, {p}, {p}, {p}) RETURNING id',
+                insert_values,
+            )
+            inquilino_id = write_cur.fetchone()[0]
+        else:
+            write_cur.execute(
+                f'INSERT INTO inquilinos (nombre, dni, telefono, email) VALUES ({p}, {p}, {p}, {p})',
+                insert_values,
+            )
+            inquilino_id = write_cur.lastrowid
+
+        write_cur.execute(
+            f'''UPDATE contratos
+                SET estado={p}, fecha_fin={p}
+                WHERE inmueble_id={p} AND LOWER(COALESCE(estado, ''))='activo' ''',
+            ('Finalizado', today_iso, inmueble_id)
+        )
+
+        write_cur.execute(
+            f'''INSERT INTO contratos
+                (inmueble_id, inquilino_id, fecha_inicio, fecha_fin, monto_mensual, dia_pago, estado, observacion)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})''',
+            (inmueble_id, inquilino_id, today_iso, None, monto_mensual, 1, 'Activo', 'Asignado desde gestor de cobranzas')
+        )
+
+        write_cur.execute(
+            f'''SELECT id FROM gestor_cobranzas
+                WHERE LOWER(TRIM(COALESCE(inmueble, ''))) = LOWER(TRIM({p}))
+                AND periodo={p}
+                ORDER BY id DESC LIMIT 1''',
+            (inmueble_codigo, periodo_actual)
+        )
+        cobranza_actual = write_cur.fetchone()
+        cobranza_id = cobranza_actual['id'] if isinstance(cobranza_actual, dict) else (cobranza_actual[0] if cobranza_actual else None)
+
+        if cobranza_id:
+            write_cur.execute(
+                f'''UPDATE gestor_cobranzas
+                    SET inquilino={p}, monto={p}
+                    WHERE id={p}''',
+                (nombre, monto_mensual, cobranza_id)
+            )
+        else:
+            write_cur.execute(
+                f'''INSERT INTO gestor_cobranzas
+                    (inmueble, inquilino, periodo, vencimiento, monto, monto_pagado, estado, fecha_pago, observacion)
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})''',
+                (
+                    inmueble_codigo,
+                    nombre,
+                    periodo_actual,
+                    today_iso,
+                    monto_mensual,
+                    0.0,
+                    'Pendiente',
+                    None,
+                    'Generado al registrar nuevo inquilino',
+                )
+            )
+
+        sync_inmuebles_estado(conn, {inmueble_id})
+        conn.commit()
+    except Exception as e:
+        print(f'Error al crear inquilino: {e}')
+        conn.rollback()
+        return redirect(url_for('cobranzas_rentas', view='inquilinos', err='No se pudo registrar el inquilino. Revisa los datos e intenta de nuevo.'))
+    finally:
+        write_cur.close()
+        conn.close()
+
+    return redirect(url_for('cobranzas_rentas', view='inquilinos', msg='Inquilino registrado correctamente y inmueble actualizado.'))
 
 
 @app.route('/cobranzas-rentas/inquilinos/<int:inquilino_id>/edit', methods=['GET', 'POST'])
