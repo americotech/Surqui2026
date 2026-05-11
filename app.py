@@ -885,6 +885,46 @@ def update():
     return redirect(url_for('index'))
 
 
+@app.route('/inmuebles/add', methods=['POST'])
+@admin_redirect('index')
+def add_inmueble():
+    codigo = (request.form.get('codigo') or '').strip()
+    descripcion = (request.form.get('descripcion') or '').strip()
+    monto_renta = to_float(request.form.get('monto_renta'))
+    porcentaje = normalize_percentage(request.form.get('porcentaje'), 30.0)
+    if not codigo:
+        return redirect(url_for('index'))
+    conn = get_db_connection()
+    cur = conn.cursor()
+    p = get_placeholder()
+    cur.execute(
+        f'INSERT INTO inmuebles (codigo, descripcion, monto_renta, porcentaje) VALUES ({p}, {p}, {p}, {p})',
+        (codigo, descripcion, monto_renta, porcentaje)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return redirect(url_for('index'))
+
+
+@app.route('/inmuebles/<int:inmueble_id>/delete', methods=['POST'])
+@admin_redirect('index')
+def delete_inmueble(inmueble_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    p = get_placeholder()
+    try:
+        cur.execute(f'DELETE FROM inmuebles WHERE id={p}', (inmueble_id,))
+        conn.commit()
+    except Exception as e:
+        print(f"Error al eliminar inmueble: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
+    return redirect(url_for('index'))
+
+
 @app.route('/tributos', methods=['GET', 'POST'])
 def tributos():
     conn = get_db_connection()
