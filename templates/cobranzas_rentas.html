@@ -701,7 +701,6 @@
                                     <th>Estado</th>
                                     <th>Inquilino actual</th>
                                     <th>Periodo actual</th>
-                                    <th>Estado pago</th>
                                     <th class="text-end">Renta</th>
                                     <th class="text-end">Pagado</th>
                                 </tr>
@@ -714,7 +713,6 @@
                                     <td>{{ row.estado or '-' }}</td>
                                     <td>{{ row.inquilino or '-' }}</td>
                                     <td>{{ row.periodo or '-' }}</td>
-                                    <td>{{ row.estado_pago or '-' }}</td>
                                     <td class="text-end">S/ {{ "%.2f"|format(row.monto_renta or 0) }}</td>
                                     <td class="text-end">S/ {{ "%.2f"|format(row.monto_pagado or 0) }}</td>
                                 </tr>
