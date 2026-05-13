@@ -493,11 +493,13 @@
                 </div>
 
                 <section class="stats-grid">
+                    {% if editable %}
                     <article class="stat-card blue">
                         <div class="stat-label">Esperado {{ periodo_titulo }}</div>
                         <p class="stat-value">S/ {{ "%.2f"|format(esperado_mes) }}</p>
                         <p class="stat-subvalue">US$ {{ "%.2f"|format(esperado_mes_usd) }} (TC {{ "%.3f"|format(dolar or 0) }})</p>
                     </article>
+                    {% endif %}
 
                     <article class="stat-card green">
                         <div class="stat-label">Recaudado</div>
@@ -546,7 +548,7 @@
                             </div>
 
                             <div class="avance-montos">
-                                Pagado: S/ {{ "%.2f"|format(row.pagado) }} | Debe: S/ {{ "%.2f"|format(row.deuda) }} | Esperado: S/ {{ "%.2f"|format(row.esperado) }}
+                                Pagado: S/ {{ "%.2f"|format(row.pagado) }} | Debe: S/ {{ "%.2f"|format(row.deuda) }}{% if editable %} | Esperado: S/ {{ "%.2f"|format(row.esperado) }}{% endif %}
                             </div>
 
                             <div class="inclined-track mt-2">
