@@ -67,12 +67,6 @@
                 </div>
             </div>
 
-            {% if editable %}
-            {% for dep in inmuebles %}
-            <form id="delete-inmueble-{{ dep.id }}" action="/inmuebles/{{ dep.id }}/delete" method="POST" style="display:none;"></form>
-            {% endfor %}
-            {% endif %}
-
             <div class="table-responsive bg-white p-3 shadow-sm rounded">
                 <table class="table table-hover align-middle">
                     <thead class="table-dark">
@@ -107,7 +101,10 @@
                             </td>
                             {% if editable %}
                             <td>
-                                <button type="submit" form="delete-inmueble-{{ dep.id }}"
+                                <button type="submit"
+                                    formaction="{{ url_for('delete_inmueble', inmueble_id=dep.id) }}"
+                                    formmethod="post"
+                                    formnovalidate
                                     class="btn btn-sm btn-outline-danger"
                                     onclick="return confirm('¿Eliminar el inmueble {{ dep.codigo }}?')">
                                     Eliminar

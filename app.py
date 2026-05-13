@@ -896,7 +896,7 @@ def update():
     conn.commit()
     cur.close()
     conn.close()
-    return redirect(url_for('index'))
+    return redirect(url_for('index', msg='Cambios de renta y porcentaje guardados correctamente.'))
 
 
 @app.route('/inmuebles/add', methods=['POST'])
