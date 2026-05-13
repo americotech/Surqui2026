@@ -1309,6 +1309,8 @@ def cobranzas_rentas():
     view_mode = (request.args.get('view') or 'dashboard').strip().lower()
     if view_mode not in {'dashboard', 'historial', 'inmuebles', 'inquilinos'}:
         view_mode = 'dashboard'
+    if not is_admin() and view_mode in {'inmuebles', 'inquilinos'}:
+        view_mode = 'dashboard'
     message = (request.args.get('msg') or '').strip()
     error = (request.args.get('err') or '').strip()
 
@@ -1402,14 +1404,55 @@ def cobranzas_rentas():
     rows = rows_relacionados
 
     rows_periodo = [r for r in rows if (r['periodo'] or '') == periodo_actual]
-    esperado_mes = sum(float(r['monto'] or 0) for r in rows_periodo)
+    inmuebles_by_codigo = {
+        (i['codigo'] or '').strip().lower(): i
+        for i in inmuebles
+        if (i['codigo'] or '').strip()
+    }
+    esperado_activos = 0.0
+    for inmueble in inmuebles:
+        codigo = (inmueble['codigo'] or '').strip().lower()
+        if codigo and codigo in codigos_activos:
+            esperado_activos += float(inmueble['monto_renta'] or 0)
+
+    # Si no hay contratos activos detectados, conserva el comportamiento anterior.
+    esperado_mes = esperado_activos if esperado_activos > 0 else sum(float(r['monto'] or 0) for r in rows_periodo)
     recaudado_mes = sum(float(r['monto_pagado'] or 0) for r in rows_periodo)
+    esperado_mes_usd = (esperado_mes / dolar) if dolar else 0.0
+    recaudado_mes_usd = (recaudado_mes / dolar) if dolar else 0.0
     porcentaje_cobrado = (recaudado_mes / esperado_mes * 100) if esperado_mes else 0.0
 
     pendientes_periodo = [
         r for r in rows_periodo
-        if (r['estado'] or '').lower() != 'pagado' or float(r['monto_pagado'] or 0) < float(r['monto'] or 0)
+        if float(r['monto_pagado'] or 0) < float(r['monto'] or 0)
     ]
+
+    # Incluye inmuebles activos sin registro en el periodo actual como pendiente.
+    inmuebles_con_registro_periodo = {
+        (r['inmueble'] or '').strip().lower()
+        for r in rows_periodo
+        if (r['inmueble'] or '').strip()
+    }
+    for codigo_activo in codigos_activos:
+        if codigo_activo in inmuebles_con_registro_periodo:
+            continue
+
+        inmueble = inmuebles_by_codigo.get(codigo_activo)
+        if not inmueble:
+            continue
+
+        pendientes_periodo.append({
+            'id': None,
+            'inmueble': inmueble['codigo'],
+            'inquilino': inquilino_activo_por_inmueble.get(codigo_activo),
+            'periodo': periodo_actual,
+            'vencimiento': None,
+            'monto': float(inmueble['monto_renta'] or 0),
+            'monto_pagado': 0.0,
+            'estado': 'Pendiente',
+            'fecha_pago': None,
+            'observacion': 'Sin registro de cobranza en el periodo actual',
+        })
 
     # Unifica pendientes por inmueble para evitar duplicados del mismo mes.
     pendientes_por_inmueble = {}
@@ -1559,7 +1602,9 @@ def cobranzas_rentas():
         error=error,
         dolar=dolar,
         esperado_mes=esperado_mes,
+        esperado_mes_usd=esperado_mes_usd,
         recaudado_mes=recaudado_mes,
+        recaudado_mes_usd=recaudado_mes_usd,
         porcentaje_cobrado=porcentaje_cobrado,
         pendientes_count=pendientes_count,
         pendientes_rows=pendientes_periodo,

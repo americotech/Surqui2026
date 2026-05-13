@@ -148,7 +148,6 @@ def check_null_values(cur):
         issues.append(f"❌ {problemas} contratos sin inquilino_id")
     
     # cobranzas sin inmueble
-    cur.execute("SELECT COUNT(*) as n FROM gestor_cobranzas WHERE inmueble IS NULL OR inmueble = ''")
     cur.execute("SELECT COUNT(*) as n FROM gestor_cobranzas WHERE COALESCE(inmueble, '') = ''")
     problemas = cur.fetchone()['n']
     if problemas > 0:
@@ -167,16 +166,19 @@ def check_duplicates(cur):
     
     issues = []
     
-    # Contratos duplicados (mismo inquilino + inmueble)
+    # Contratos duplicados activos (mismo inquilino + inmueble)
     cur.execute("""
         SELECT inquilino_id, inmueble_id, COUNT(*) as n
         FROM contratos
+        WHERE LOWER(COALESCE(estado, '')) = 'activo'
         GROUP BY inquilino_id, inmueble_id
         HAVING COUNT(*) > 1
     """)
-    duplicados = cur.fetchall()
-    if duplicados:
-        issues.append(f"⚠️  {len(duplicados)} pares inquilino-inmueble con múltiples contratos")
+    duplicados_activos = cur.fetchall()
+    if duplicados_activos:
+        issues.append(f"❌ {len(duplicados_activos)} pares inquilino-inmueble con múltiples contratos activos")
+        for d in duplicados_activos:
+            issues.append(f"   inquilino_id={d['inquilino_id']}, inmueble_id={d['inmueble_id']}: {d['n']} contratos activos")
     
     # Cobranzas duplicadas (mismo inmueble + periodo)
     cur.execute("""

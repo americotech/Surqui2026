@@ -10,6 +10,12 @@ import importlib
 import os
 import sys
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+except ModuleNotFoundError:
+    pass
+
 
 def get_driver():
     try:
@@ -41,8 +47,23 @@ def warn(label, detail):
     print(f'  {label}: *** PROBLEMA *** {detail}')
 
 
+def table_exists(cur, table_name):
+    cur.execute(
+        '''
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = %s
+        ) AS exists
+        ''',
+        (table_name,)
+    )
+    row = cur.fetchone()
+    return bool(row['exists'])
+
+
 def main():
-    url = os.environ.get('TARGET_DATABASE_URL') or os.environ.get('DATABASE_URL') or os.environ.get('NEON_DATABASE_URL')
+    url = os.environ.get('DATABASE_URL') or os.environ.get('TARGET_DATABASE_URL') or os.environ.get('NEON_DATABASE_URL')
     if not url:
         print('ERROR: Define TARGET_DATABASE_URL con la URL de surqui2026.')
         sys.exit(1)
@@ -55,7 +76,9 @@ def main():
         # 1. Conteo de tablas
         # ------------------------------------------------------------------ #
         print('=== CONTEO DE TABLAS ===')
-        tables = ['inmuebles', 'inquilinos', 'contratos', 'pagos', 'gestor_cobranzas', 'users']
+        tables = ['inmuebles', 'inquilinos', 'contratos', 'gestor_cobranzas', 'users']
+        if table_exists(cur, 'pagos'):
+            tables.append('pagos')
         counts = {}
         for t in tables:
             cur.execute(f'SELECT COUNT(*) AS n FROM {t}')
@@ -101,31 +124,35 @@ def main():
             warn('contratos -> inquilinos', f'{n} contratos sin inquilino valido')
             issues += 1
 
-        # pagos -> contratos
-        cur.execute('''
-            SELECT COUNT(*) AS n FROM pagos p
-            LEFT JOIN contratos c ON c.id = p.contrato_id
-            WHERE p.contrato_id IS NOT NULL AND c.id IS NULL
-        ''')
-        n = int(cur.fetchone()['n'])
-        if n == 0:
-            ok('pagos -> contratos')
-        else:
-            warn('pagos -> contratos', f'{n} pagos sin contrato valido')
-            issues += 1
+        if table_exists(cur, 'pagos'):
+            # pagos -> contratos
+            cur.execute('''
+                SELECT COUNT(*) AS n FROM pagos p
+                LEFT JOIN contratos c ON c.id = p.contrato_id
+                WHERE p.contrato_id IS NOT NULL AND c.id IS NULL
+            ''')
+            n = int(cur.fetchone()['n'])
+            if n == 0:
+                ok('pagos -> contratos')
+            else:
+                warn('pagos -> contratos', f'{n} pagos sin contrato valido')
+                issues += 1
 
-        # pagos -> inmuebles
-        cur.execute('''
-            SELECT COUNT(*) AS n FROM pagos p
-            LEFT JOIN inmuebles i ON i.id = p.inmueble_id
-            WHERE p.inmueble_id IS NOT NULL AND i.id IS NULL
-        ''')
-        n = int(cur.fetchone()['n'])
-        if n == 0:
-            ok('pagos -> inmuebles')
+            # pagos -> inmuebles
+            cur.execute('''
+                SELECT COUNT(*) AS n FROM pagos p
+                LEFT JOIN inmuebles i ON i.id = p.inmueble_id
+                WHERE p.inmueble_id IS NOT NULL AND i.id IS NULL
+            ''')
+            n = int(cur.fetchone()['n'])
+            if n == 0:
+                ok('pagos -> inmuebles')
+            else:
+                warn('pagos -> inmuebles', f'{n} pagos sin inmueble valido')
+                issues += 1
         else:
-            warn('pagos -> inmuebles', f'{n} pagos sin inmueble valido')
-            issues += 1
+            print('  pagos -> contratos: SKIP (tabla pagos no existe)')
+            print('  pagos -> inmuebles: SKIP (tabla pagos no existe)')
 
         # ------------------------------------------------------------------ #
         # 4. gestor_cobranzas: resumen por estado
@@ -135,6 +162,37 @@ def main():
         cur.execute('SELECT estado, COUNT(*) AS n FROM gestor_cobranzas GROUP BY estado ORDER BY estado')
         for r in cur.fetchall():
             print(f'  estado={r["estado"]}  filas={r["n"]}')
+
+        # gestor_cobranzas -> inmuebles.codigo
+        cur.execute('''
+            SELECT COUNT(*) AS n
+            FROM gestor_cobranzas gc
+            WHERE COALESCE(gc.inmueble, '') != ''
+              AND COALESCE(gc.inmueble, '') NOT IN (SELECT codigo FROM inmuebles)
+        ''')
+        n = int(cur.fetchone()['n'])
+        if n == 0:
+            ok('gestor_cobranzas.inmueble referenciado en inmuebles.codigo')
+        else:
+            warn('gestor_cobranzas.inmueble', f'{n} filas con codigo no referenciado en inmuebles.codigo')
+            issues += 1
+
+        # Duplicados por inmueble+periodo
+        cur.execute('''
+            SELECT COUNT(*) AS n
+            FROM (
+                SELECT inmueble, periodo, COUNT(*) AS c
+                FROM gestor_cobranzas
+                GROUP BY inmueble, periodo
+                HAVING COUNT(*) > 1
+            ) t
+        ''')
+        n = int(cur.fetchone()['n'])
+        if n == 0:
+            ok('gestor_cobranzas sin duplicados por inmueble+periodo')
+        else:
+            warn('gestor_cobranzas duplicados', f'{n} pares inmueble+periodo con multiples filas')
+            issues += 1
 
         # ------------------------------------------------------------------ #
         # 5. inmuebles: porcentaje fuera de rango
@@ -158,14 +216,17 @@ def main():
             warn('inmuebles.monto_renta', f'{n} filas con valor negativo')
             issues += 1
 
-        # pagos: monto_esperado negativo
-        cur.execute('SELECT COUNT(*) AS n FROM pagos WHERE monto_esperado < 0 OR monto_pagado < 0')
-        n = int(cur.fetchone()['n'])
-        if n == 0:
-            ok('pagos.monto_esperado / monto_pagado >= 0')
+        if table_exists(cur, 'pagos'):
+            # pagos: monto_esperado negativo
+            cur.execute('SELECT COUNT(*) AS n FROM pagos WHERE monto_esperado < 0 OR monto_pagado < 0')
+            n = int(cur.fetchone()['n'])
+            if n == 0:
+                ok('pagos.monto_esperado / monto_pagado >= 0')
+            else:
+                warn('pagos montos', f'{n} filas con montos negativos')
+                issues += 1
         else:
-            warn('pagos montos', f'{n} filas con montos negativos')
-            issues += 1
+            print('  pagos.monto_esperado / monto_pagado >= 0: SKIP (tabla pagos no existe)')
 
         # users: al menos un admin activo
         cur.execute("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_active = TRUE")
