@@ -101,12 +101,11 @@
                             </td>
                             {% if editable %}
                             <td>
-                                <button type="submit"
-                                    formaction="{{ url_for('delete_inmueble', inmueble_id=dep.id) }}"
-                                    formmethod="post"
-                                    formnovalidate
+                                <button type="button"
                                     class="btn btn-sm btn-outline-danger"
-                                    onclick="return confirm('¿Eliminar el inmueble {{ dep.codigo }}?')">
+                                    data-delete-url="{{ url_for('delete_inmueble', inmueble_id=dep.id) }}"
+                                    data-codigo="{{ dep.codigo }}"
+                                    onclick="confirmDeleteInmueble(this)">
                                     Eliminar
                                 </button>
                             </td>
@@ -155,5 +154,20 @@
         </div>
         {% endif %}
     </div>
+    <script>
+        function confirmDeleteInmueble(button) {
+            const actionUrl = button.dataset.deleteUrl;
+            const codigo = button.dataset.codigo;
+            if (!confirm(`¿Eliminar el inmueble ${codigo}?`)) {
+                return;
+            }
+
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = actionUrl;
+            document.body.appendChild(form);
+            form.submit();
+        }
+    </script>
 </body>
 </html>
