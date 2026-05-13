@@ -825,7 +825,21 @@ def index():
     cuotas_pendientes = max(0, 23 - months_passed)
     
     editable = is_admin()
-    return render_template('index.html', inmuebles=inmuebles, dolar=dolar, total_ingreso_neto=total_ingreso_neto, total_ingreso_dolares=total_ingreso_dolares, pago_cuota=pago_cuota, gasto_father=gasto_father, saldo_mother=saldo_mother, cuotas_pendientes=cuotas_pendientes, editable=editable, current_date=current_date.strftime("%d/%m/%Y"))
+    return render_template(
+        'index.html',
+        inmuebles=inmuebles,
+        dolar=dolar,
+        total_ingreso_neto=total_ingreso_neto,
+        total_ingreso_dolares=total_ingreso_dolares,
+        pago_cuota=pago_cuota,
+        gasto_father=gasto_father,
+        saldo_mother=saldo_mother,
+        cuotas_pendientes=cuotas_pendientes,
+        editable=editable,
+        current_date=current_date.strftime("%d/%m/%Y"),
+        message=(request.args.get('msg') or '').strip(),
+        error=(request.args.get('err') or '').strip(),
+    )
 
 @app.route('/gastos')
 def gastos():
@@ -911,18 +925,64 @@ def add_inmueble():
 @admin_redirect('index')
 def delete_inmueble(inmueble_id):
     conn = get_db_connection()
-    cur = conn.cursor()
+    cur = get_cursor(conn)
+    write_cur = conn.cursor()
     p = get_placeholder()
+
+    def has_table(table_name):
+        if get_database_url():
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = %s
+                ) AS exists
+                """,
+                (table_name,)
+            )
+            return bool(cur.fetchone()['exists'])
+
+        cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,)
+        )
+        return cur.fetchone() is not None
+
     try:
-        cur.execute(f'DELETE FROM inmuebles WHERE id={p}', (inmueble_id,))
+        cur.execute(f'SELECT codigo FROM inmuebles WHERE id={p}', (inmueble_id,))
+        row = cur.fetchone()
+        if not row:
+            return redirect(url_for('index', err='No se encontro el inmueble a eliminar.'))
+
+        codigo = (row['codigo'] or '').strip()
+
+        # Limpia dependencias para que la eliminación del inmueble no falle por FK.
+        write_cur.execute(
+            f'DELETE FROM gestor_cobranzas WHERE LOWER(COALESCE(inmueble, \'\')) = LOWER({p})',
+            (codigo,)
+        )
+
+        if has_table('pagos'):
+            write_cur.execute(f'DELETE FROM pagos WHERE inmueble_id={p}', (inmueble_id,))
+
+        write_cur.execute(f'DELETE FROM contratos WHERE inmueble_id={p}', (inmueble_id,))
+        write_cur.execute(f'DELETE FROM inmuebles WHERE id={p}', (inmueble_id,))
+
+        if write_cur.rowcount <= 0:
+            conn.rollback()
+            return redirect(url_for('index', err='No se pudo eliminar el inmueble.'))
+
         conn.commit()
+        return redirect(url_for('index', msg=f'Inmueble {codigo} eliminado correctamente.'))
     except Exception as e:
         print(f"Error al eliminar inmueble: {e}")
         conn.rollback()
+        return redirect(url_for('index', err='No se pudo eliminar el inmueble por una restriccion de datos.'))
     finally:
         cur.close()
+        write_cur.close()
         conn.close()
-    return redirect(url_for('index'))
 
 
 @app.route('/tributos', methods=['GET', 'POST'])

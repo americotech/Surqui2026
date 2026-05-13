@@ -19,6 +19,13 @@
                 <a href="{{ url_for('logout') }}" class="btn btn-secondary">Cerrar Sesión</a>
             </div>
         </div>
+
+        {% if error %}
+        <div class="alert alert-danger" role="alert">{{ error }}</div>
+        {% endif %}
+        {% if message %}
+        <div class="alert alert-success" role="alert">{{ message }}</div>
+        {% endif %}
         
         <form action="/update" method="POST">
             <div class="card mb-4 border-primary">
