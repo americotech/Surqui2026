@@ -799,17 +799,26 @@ def update_user_password(user_id):
 def index():
     conn = get_db_connection()
     cur = get_cursor(conn)
+    current_date = datetime.date.today()
 
     try:
         cur.execute('SELECT id, codigo, descripcion, monto_renta, porcentaje FROM inmuebles ORDER BY id ASC')
         inmuebles_rows = cur.fetchall()
         dolar = get_dolar_rate(conn, cur)
         gasto_father = get_gasto_father(conn, cur)
+        cur.execute('SELECT fecha, costo FROM gastos')
+        gastos_rows = cur.fetchall()
+        gastos_generales_mes = 0.0
+        for row in gastos_rows:
+            fecha_gasto = coerce_date(row['fecha'])
+            if fecha_gasto and fecha_gasto.year == current_date.year and fecha_gasto.month == current_date.month:
+                gastos_generales_mes += to_float(row['costo'])
     except Exception as e:
         print(f"Error en la consulta: {e}")
         inmuebles_rows = []
         dolar = 1.0
         gasto_father = 300.0
+        gastos_generales_mes = 0.0
     finally:
         cur.close()
         conn.close()
@@ -831,12 +840,12 @@ def index():
         })
     total_ingreso_neto = sum(dep['ingreso_neto'] for dep in inmuebles)
     total_ingreso_dolares = total_ingreso_neto / dolar if dolar else 0.0
+    gastos_generales_mes_usd = gastos_generales_mes / dolar if dolar else 0.0
     pago_cuota = 600.0
     saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father
     
     # Cálculo cuotas
     start_date = datetime.date(2026, 4, 1)
-    current_date = datetime.date.today()
     months_passed = (current_date.year - start_date.year) * 12 + (current_date.month - start_date.month)
     cuotas_pendientes = max(0, 23 - months_passed)
     
@@ -849,6 +858,8 @@ def index():
         total_ingreso_dolares=total_ingreso_dolares,
         pago_cuota=pago_cuota,
         gasto_father=gasto_father,
+        gastos_generales_mes=gastos_generales_mes,
+        gastos_generales_mes_usd=gastos_generales_mes_usd,
         saldo_mother=saldo_mother,
         cuotas_pendientes=cuotas_pendientes,
         editable=editable,
