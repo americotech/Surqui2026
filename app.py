@@ -842,7 +842,7 @@ def index():
     total_ingreso_dolares = total_ingreso_neto / dolar if dolar else 0.0
     gastos_generales_mes_usd = gastos_generales_mes / dolar if dolar else 0.0
     pago_cuota = 600.0
-    saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father
+    saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father - gastos_generales_mes_usd
     
     # Cálculo cuotas
     start_date = datetime.date(2026, 4, 1)
