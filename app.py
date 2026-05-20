@@ -844,7 +844,7 @@ def index():
     total_costo_administrativo_usd = total_costo_administrativo / dolar if dolar else 0.0
     gastos_generales_mes_usd = gastos_generales_mes / dolar if dolar else 0.0
     pago_cuota = 600.0
-    saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father - gastos_generales_mes_usd
+    saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father - gastos_generales_mes_usd - total_costo_administrativo_usd
     
     # Cálculo cuotas
     start_date = datetime.date(2026, 4, 1)
