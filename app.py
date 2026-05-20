@@ -839,7 +839,9 @@ def index():
             'ingreso_neto': ingreso_neto,
         })
     total_ingreso_neto = sum(dep['ingreso_neto'] for dep in inmuebles)
+    total_costo_administrativo = sum(dep['costo_administrativo'] for dep in inmuebles)
     total_ingreso_dolares = total_ingreso_neto / dolar if dolar else 0.0
+    total_costo_administrativo_usd = total_costo_administrativo / dolar if dolar else 0.0
     gastos_generales_mes_usd = gastos_generales_mes / dolar if dolar else 0.0
     pago_cuota = 600.0
     saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father - gastos_generales_mes_usd
@@ -856,6 +858,8 @@ def index():
         dolar=dolar,
         total_ingreso_neto=total_ingreso_neto,
         total_ingreso_dolares=total_ingreso_dolares,
+        total_costo_administrativo=total_costo_administrativo,
+        total_costo_administrativo_usd=total_costo_administrativo_usd,
         pago_cuota=pago_cuota,
         gasto_father=gasto_father,
         gastos_generales_mes=gastos_generales_mes,
