@@ -57,7 +57,15 @@
                         </div>
                         <div class="col-md-4">
                             <p class="mb-1 text-start"><strong>Pago de Cuota:</strong> {{ "%.2f"|format(pago_cuota) }} USD</p>
-                            <p class="mb-1 text-start"><strong>Gasto Father:</strong> {{ "%.2f"|format(gasto_father) }} USD</p>
+                            <div class="mb-1 text-start">
+                                <strong>Gasto Father:</strong>
+                                {% if editable %}
+                                <input type="number" step="0.01" min="0" name="gasto_father" class="form-control form-control-sm w-50 d-inline-block ms-2" value="{{ '%.2f'|format(gasto_father) }}">
+                                <span class="ms-1">USD</span>
+                                {% else %}
+                                {{ "%.2f"|format(gasto_father) }} USD
+                                {% endif %}
+                            </div>
                             <p class="mb-0 bg-success text-white p-2 rounded text-start"><strong>Saldo Mother:</strong> {{ "%.2f"|format(saldo_mother) }} USD</p>
                         </div>
                         <div class="col-md-4 d-flex align-items-end justify-content-end">
