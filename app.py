@@ -889,7 +889,7 @@ def add_gasto():
 @admin_redirect('index')
 def update():
     conn = get_db_connection()
-    cur = conn.cursor()
+    cur = get_cursor(conn)
     placeholder = get_placeholder()
 
     # Update config values (dolar y gasto_father) preservando el valor existente
