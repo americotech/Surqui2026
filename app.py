@@ -849,7 +849,7 @@ def index():
     # Cálculo cuotas
     start_date = datetime.date(2026, 4, 1)
     months_passed = (current_date.year - start_date.year) * 12 + (current_date.month - start_date.month)
-    cuotas_pendientes = max(0, 23 - months_passed)
+    cuotas_pendientes = 13
     
     editable = is_admin()
     return render_template(
