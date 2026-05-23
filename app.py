@@ -839,12 +839,13 @@ def index():
             'ingreso_neto': ingreso_neto,
         })
 
-    # Orden visual del panel: 1P al inicio y 2P_SJM al final.
+    # Orden visual del panel: 1P, luego 2P, y 2P_SJM al final.
     inmuebles = sorted(
         inmuebles,
         key=lambda dep: (
-            0 if str(dep.get('codigo') or '').strip().lower().startswith('1p')
-            else 9 if '2psjm' in str(dep.get('codigo') or '').replace('_', '').replace('-', '').replace(' ', '').strip().lower()
+            0 if str(dep.get('codigo') or '').replace('_', '').replace('-', '').replace(' ', '').strip().lower().startswith('1p')
+            else 1 if str(dep.get('codigo') or '').replace('_', '').replace('-', '').replace(' ', '').strip().lower() == '2p'
+            else 9 if str(dep.get('codigo') or '').replace('_', '').replace('-', '').replace(' ', '').strip().lower() == '2psjm'
             else 2,
             dep.get('id') or 0,
         ),
