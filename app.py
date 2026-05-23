@@ -2144,6 +2144,170 @@ def delete_cobranza_renta(entry_id):
     conn.close()
     return redirect(url_for('cobranzas_rentas'))
 
+@app.route('/contratos')
+@admin_required
+def contratos():
+    if not is_admin():
+        return redirect(url_for('cobranzas_rentas'))
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    cur.execute(
+        """
+        SELECT c.id, c.fecha_inicio, c.fecha_fin, c.monto_mensual, c.dia_pago,
+               c.estado, c.observacion,
+               i.codigo AS inmueble_codigo, i.descripcion AS inmueble_descripcion,
+               q.nombre AS inquilino_nombre
+        FROM contratos c
+        LEFT JOIN inmuebles i ON i.id = c.inmueble_id
+        LEFT JOIN inquilinos q ON q.id = c.inquilino_id
+        ORDER BY c.id DESC
+        """
+    )
+    contratos_rows = cur.fetchall()
+    cur.execute('SELECT id, codigo, descripcion FROM inmuebles ORDER BY codigo ASC')
+    inmuebles = cur.fetchall()
+    cur.execute('SELECT id, nombre FROM inquilinos ORDER BY nombre ASC')
+    inquilinos = cur.fetchall()
+    cur.close()
+    conn.close()
+    return render_template(
+        'contratos.html',
+        contratos=contratos_rows,
+        inmuebles=inmuebles,
+        inquilinos=inquilinos,
+        editable=True,
+        message=(request.args.get('msg') or '').strip(),
+        error=(request.args.get('err') or '').strip(),
+    )
+
+
+@app.route('/contratos/add', methods=['POST'])
+@admin_required
+def add_contrato():
+    if not is_admin():
+        return redirect(url_for('contratos'))
+    p = get_placeholder()
+    inmueble_id = request.form.get('inmueble_id') or None
+    inquilino_id = request.form.get('inquilino_id') or None
+    fecha_inicio = (request.form.get('fecha_inicio') or '').strip()
+    fecha_fin = (request.form.get('fecha_fin') or '').strip() or None
+    monto_mensual = to_float(request.form.get('monto_mensual'))
+    dia_pago_raw = request.form.get('dia_pago') or '1'
+    try:
+        dia_pago = max(1, min(31, int(dia_pago_raw)))
+    except ValueError:
+        dia_pago = 1
+    estado = (request.form.get('estado') or 'Activo').strip()
+    observacion = (request.form.get('observacion') or '').strip() or None
+
+    if not fecha_inicio:
+        return redirect(url_for('contratos', err='La fecha de inicio es obligatoria.'))
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f'INSERT INTO contratos (inmueble_id, inquilino_id, fecha_inicio, fecha_fin, monto_mensual, dia_pago, estado, observacion) VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})',
+        (inmueble_id, inquilino_id, fecha_inicio, fecha_fin, monto_mensual, dia_pago, estado, observacion)
+    )
+    conn.commit()
+    if inmueble_id:
+        sync_inmuebles_estado(conn, [inmueble_id])
+        conn.commit()
+    cur.close()
+    conn.close()
+    return redirect(url_for('contratos', msg='Contrato creado correctamente.'))
+
+
+@app.route('/contratos/<int:contrato_id>/edit', methods=['GET', 'POST'])
+@admin_required
+def edit_contrato(contrato_id):
+    if not is_admin():
+        return redirect(url_for('contratos'))
+    p = get_placeholder()
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+
+    if request.method == 'POST':
+        inmueble_id = request.form.get('inmueble_id') or None
+        inquilino_id = request.form.get('inquilino_id') or None
+        fecha_inicio = (request.form.get('fecha_inicio') or '').strip()
+        fecha_fin = (request.form.get('fecha_fin') or '').strip() or None
+        monto_mensual = to_float(request.form.get('monto_mensual'))
+        dia_pago_raw = request.form.get('dia_pago') or '1'
+        try:
+            dia_pago = max(1, min(31, int(dia_pago_raw)))
+        except ValueError:
+            dia_pago = 1
+        estado = (request.form.get('estado') or 'Activo').strip()
+        observacion = (request.form.get('observacion') or '').strip() or None
+
+        if not fecha_inicio:
+            cur.close()
+            conn.close()
+            return redirect(url_for('edit_contrato', contrato_id=contrato_id, err='La fecha de inicio es obligatoria.'))
+
+        write_cur = conn.cursor()
+        write_cur.execute(
+            f'UPDATE contratos SET inmueble_id={p}, inquilino_id={p}, fecha_inicio={p}, fecha_fin={p}, monto_mensual={p}, dia_pago={p}, estado={p}, observacion={p} WHERE id={p}',
+            (inmueble_id, inquilino_id, fecha_inicio, fecha_fin, monto_mensual, dia_pago, estado, observacion, contrato_id)
+        )
+        conn.commit()
+        if inmueble_id:
+            sync_inmuebles_estado(conn, [inmueble_id])
+            conn.commit()
+        write_cur.close()
+        cur.close()
+        conn.close()
+        return redirect(url_for('contratos', msg='Contrato actualizado correctamente.'))
+
+    cur.execute(f'SELECT * FROM contratos WHERE id={p}', (contrato_id,))
+    contrato = cur.fetchone()
+    if not contrato:
+        cur.close()
+        conn.close()
+        return redirect(url_for('contratos', err='Contrato no encontrado.'))
+
+    cur.execute('SELECT id, codigo, descripcion FROM inmuebles ORDER BY codigo ASC')
+    inmuebles = cur.fetchall()
+    cur.execute('SELECT id, nombre FROM inquilinos ORDER BY nombre ASC')
+    inquilinos = cur.fetchall()
+    cur.close()
+    conn.close()
+    return render_template(
+        'contratos.html',
+        contrato=contrato,
+        inmuebles=inmuebles,
+        inquilinos=inquilinos,
+        editable=True,
+        edit_mode=True,
+        message=(request.args.get('msg') or '').strip(),
+        error=(request.args.get('err') or '').strip(),
+    )
+
+
+@app.route('/contratos/<int:contrato_id>/delete', methods=['POST'])
+@admin_required
+def delete_contrato(contrato_id):
+    if not is_admin():
+        return redirect(url_for('contratos'))
+    p = get_placeholder()
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    cur.execute(f'SELECT inmueble_id FROM contratos WHERE id={p}', (contrato_id,))
+    row = cur.fetchone()
+    inmueble_id = row['inmueble_id'] if row else None
+    write_cur = conn.cursor()
+    write_cur.execute(f'DELETE FROM contratos WHERE id={p}', (contrato_id,))
+    conn.commit()
+    if inmueble_id:
+        sync_inmuebles_estado(conn, [inmueble_id])
+        conn.commit()
+    write_cur.close()
+    cur.close()
+    conn.close()
+    return redirect(url_for('contratos', msg='Contrato eliminado correctamente.'))
+
+
 # Run init_db at module load so gunicorn (Render) also initialises the DB
 init_db()
 
