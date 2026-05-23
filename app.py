@@ -838,6 +838,18 @@ def index():
             'costo_administrativo': costo_administrativo,
             'ingreso_neto': ingreso_neto,
         })
+
+    # Orden visual del panel: 1P y luego 2P al inicio.
+    inmuebles = sorted(
+        inmuebles,
+        key=lambda dep: (
+            0 if str(dep.get('codigo') or '').strip().lower().startswith('1p')
+            else 1 if str(dep.get('codigo') or '').strip().lower().startswith('2p')
+            else 2,
+            dep.get('id') or 0,
+        ),
+    )
+
     total_ingreso_neto = sum(dep['monto_renta'] for dep in inmuebles)
     total_costo_administrativo = sum(dep['costo_administrativo'] for dep in inmuebles)
     total_ingreso_dolares = total_ingreso_neto / dolar if dolar else 0.0
