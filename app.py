@@ -838,7 +838,7 @@ def index():
             'costo_administrativo': costo_administrativo,
             'ingreso_neto': ingreso_neto,
         })
-    total_ingreso_neto = sum(dep['ingreso_neto'] for dep in inmuebles)
+    total_ingreso_neto = sum(dep['monto_renta'] for dep in inmuebles)
     total_costo_administrativo = sum(dep['costo_administrativo'] for dep in inmuebles)
     total_ingreso_dolares = total_ingreso_neto / dolar if dolar else 0.0
     total_costo_administrativo_usd = total_costo_administrativo / dolar if dolar else 0.0
