@@ -1139,6 +1139,11 @@ def download_cronograma():
     return send_from_directory(app.root_path, filename, as_attachment=True)
 
 
+@app.route('/images/<path:filename>')
+def serve_image(filename):
+    return send_from_directory(os.path.join(app.root_path, 'images'), filename)
+
+
 @app.route('/gastos/semana')
 def gastos_semana():
     conn = get_db_connection()
