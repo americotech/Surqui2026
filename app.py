@@ -53,7 +53,7 @@ def admin_redirect(redirect_endpoint='index'):
 
 @app.before_request
 def require_login_for_app():
-    public_endpoints = {'login', 'static'}
+    public_endpoints = {'login', 'static', 'cuotas_pendientes_preview'}
     if request.endpoint in public_endpoints:
         return
     if not is_authenticated():
@@ -1142,6 +1142,14 @@ def download_cronograma():
 @app.route('/images/<path:filename>')
 def serve_image(filename):
     return send_from_directory(os.path.join(app.root_path, 'images'), filename)
+
+
+@app.route('/images/cuotas-pendientes-preview')
+def cuotas_pendientes_preview():
+    return send_from_directory(
+        os.path.join(app.root_path, 'images'),
+        'corrección hoja de cuotas.png'
+    )
 
 
 @app.route('/gastos/semana')
