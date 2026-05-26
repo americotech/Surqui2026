@@ -37,6 +37,11 @@
             text-decoration: none;
             display: inline-block;
         }
+
+        .hover-preview-wrap-full {
+            display: block;
+            width: 100%;
+        }
     </style>
 </head>
 <body class="bg-light">
@@ -102,7 +107,14 @@
                             </div>
                             <p class="mb-1 text-start"><strong>Gasto Administrativo (Total):</strong> S/. {{ "%.2f"|format(total_costo_administrativo) }} (USD {{ "%.2f"|format(total_costo_administrativo_usd) }})</p>
                             <p class="mb-1 text-start"><strong>Gastos Generales (Mes Actual):</strong> S/. {{ "%.2f"|format(gastos_generales_mes) }} (USD {{ "%.2f"|format(gastos_generales_mes_usd) }})</p>
-                            <p class="mb-0 bg-success text-white p-2 rounded text-start"><strong>Saldo Mother:</strong> {{ "%.2f"|format(saldo_mother) }} USD</p>
+                            <div class="hover-preview-wrap hover-preview-wrap-full" tabindex="0" aria-label="Vista previa de cartel Saldo Mother">
+                                <p class="mb-0 bg-success text-white p-2 rounded text-start"><strong>Saldo Mother:</strong> {{ "%.2f"|format(saldo_mother) }} USD</p>
+                                <img
+                                    class="hover-preview-img"
+                                    src="{{ url_for('serve_image', filename='cartel01.png') }}"
+                                    alt="Cartel Saldo Mother"
+                                >
+                            </div>
                         </div>
                         <div class="col-md-4 d-flex align-items-end justify-content-end">
                             <div class="hover-preview-wrap" tabindex="0" aria-label="Vista previa de corrección de hoja de cuotas">
