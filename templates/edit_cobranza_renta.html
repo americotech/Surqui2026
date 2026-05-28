@@ -29,7 +29,8 @@
                         </div>
                         <div class="col-md-4">
                             <label class="form-label">Inquilino</label>
-                            <input type="text" name="inquilino" class="form-control" value="{{ entry.inquilino or '' }}">
+                            <input type="text" name="inquilino" class="form-control" id="inquilino-field" value="{{ entry.inquilino or '' }}">
+                            <small class="text-muted" id="inquilino-status"></small>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label">Período</label>
@@ -45,7 +46,7 @@
                         </div>
                         <div class="col-md-2">
                             <label class="form-label">Monto</label>
-                            <input type="number" step="0.01" min="0" name="monto" class="form-control" value="{{ entry.monto }}" required>
+                            <input type="number" step="0.01" min="0" name="monto" class="form-control" id="monto-field" value="{{ entry.monto }}" required>
                         </div>
                         <div class="col-md-2">
                             <label class="form-label">Monto Pagado</label>
@@ -71,5 +72,55 @@
             </div>
         </div>
     </div>
+
+    <script>
+        // En edición, sincroniza inquilino y monto al cambiar el inmueble.
+        document.addEventListener('DOMContentLoaded', function() {
+            const inmuebleSelect = document.querySelector('select[name="inmueble"]');
+            const inquilinoField = document.getElementById('inquilino-field');
+            const montoField = document.getElementById('monto-field');
+            const inquilinoStatus = document.getElementById('inquilino-status');
+
+            if (!inmuebleSelect || !inquilinoField || !montoField) {
+                return;
+            }
+
+            inmuebleSelect.addEventListener('change', async function() {
+                const codigo = this.value;
+                if (!codigo) {
+                    return;
+                }
+
+                try {
+                    inquilinoStatus.textContent = 'Cargando datos del inmueble...';
+                    inquilinoStatus.style.color = '#6c757d';
+
+                    const response = await fetch(`/api/get-inmueble-data/${encodeURIComponent(codigo)}`);
+                    const data = await response.json();
+
+                    if (!data.success) {
+                        inquilinoStatus.textContent = '✗ ' + (data.message || 'No se pudieron obtener datos');
+                        inquilinoStatus.style.color = 'red';
+                        return;
+                    }
+
+                    montoField.value = Number(data.monto_renta || 0).toFixed(2);
+
+                    if (data.inquilino) {
+                        inquilinoField.value = data.inquilino;
+                        inquilinoStatus.textContent = '✓ Inquilino y monto actualizados';
+                        inquilinoStatus.style.color = 'green';
+                    } else {
+                        inquilinoField.value = '';
+                        inquilinoStatus.textContent = '⚠ Monto actualizado, sin contrato activo para inquilino';
+                        inquilinoStatus.style.color = '#b26a00';
+                    }
+                } catch (error) {
+                    inquilinoStatus.textContent = '✗ Error al obtener datos: ' + error.message;
+                    inquilinoStatus.style.color = 'red';
+                }
+            });
+        });
+    </script>
 </body>
 </html>

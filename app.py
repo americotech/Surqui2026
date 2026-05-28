@@ -1848,6 +1848,53 @@ def api_get_inquilino(codigo_inmueble):
         return {'inquilino': '', 'success': False, 'message': str(e)}
 
 
+@app.route('/api/get-inmueble-data/<codigo_inmueble>')
+def api_get_inmueble_data(codigo_inmueble):
+    """API para obtener inquilino activo y renta del inmueble."""
+    try:
+        conn = get_db_connection()
+        cur = get_cursor(conn)
+        p = get_placeholder()
+
+        codigo_normalizado = normalize_inmueble_codigo(codigo_inmueble)
+        codigo_key = inmueble_codigo_key(codigo_normalizado)
+
+        cur.execute(
+            f'''SELECT DISTINCT i.nombre
+               FROM contratos c
+               JOIN inquilinos i ON i.id = c.inquilino_id
+               JOIN inmuebles im ON im.id = c.inmueble_id
+               WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(im.codigo, ''), '_', ''), '-', ''), ' ', '')) = {p}
+               AND LOWER(COALESCE(c.estado, '')) = 'activo'
+               LIMIT 1''',
+            (codigo_key,)
+        )
+        tenant_row = cur.fetchone()
+
+        monto_renta = get_inmueble_renta(conn, codigo_normalizado)
+
+        cur.close()
+        conn.close()
+
+        inquilino = ''
+        if tenant_row:
+            inquilino = tenant_row['nombre'] if isinstance(tenant_row, dict) else tenant_row[0]
+
+        return {
+            'success': True,
+            'inquilino': inquilino or '',
+            'monto_renta': float(monto_renta or 0.0),
+            'codigo': codigo_normalizado,
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'inquilino': '',
+            'monto_renta': 0.0,
+            'message': str(e),
+        }
+
+
 @app.route('/cobranzas-rentas/add', methods=['GET', 'POST'])
 def add_cobranza_renta():
     if not is_admin():
