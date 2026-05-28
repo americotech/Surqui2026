@@ -190,6 +190,22 @@ def normalize_percentage(value, default=30.0):
     return max(0.0, min(to_float(value, default), 100.0))
 
 
+def inmueble_codigo_key(value):
+    """Normalize inmueble codes for robust comparisons."""
+    raw = str(value or '').strip().lower()
+    return raw.replace('_', '').replace('-', '').replace(' ', '')
+
+
+def normalize_inmueble_codigo(value):
+    """Return canonical inmueble code used in persistence and UI."""
+    code = str(value or '').strip()
+    if not code:
+        return ''
+    if inmueble_codigo_key(code) == '2psjm':
+        return '2P_SJM'
+    return code
+
+
 def ensure_inmuebles_porcentaje_column(conn, cur):
     default_percentage = 30.0
     if get_database_url():
@@ -441,6 +457,24 @@ def init_db():
 
     ensure_inmuebles_porcentaje_column(conn, cur)
 
+    # Canonicalize legacy aliases before further processing.
+    cur.execute(
+        """
+        UPDATE inmuebles
+        SET codigo = '2P_SJM'
+        WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(codigo, ''), '_', ''), '-', ''), ' ', '')) = '2psjm'
+          AND COALESCE(codigo, '') <> '2P_SJM'
+        """
+    )
+    cur.execute(
+        """
+        UPDATE gestor_cobranzas
+        SET inmueble = '2P_SJM'
+        WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(inmueble, ''), '_', ''), '-', ''), ' ', '')) = '2psjm'
+          AND COALESCE(inmueble, '') <> '2P_SJM'
+        """
+    )
+
     today = datetime.date.today()
     current_month_start = today.replace(day=1)
     previous_month_start = shift_month(current_month_start, -1)
@@ -460,7 +494,7 @@ def init_db():
             ('4B', 'Departamento 4B', 'Surquillo', 'Departamento', 'Alquilado', 1490.0),
             ('4C', 'Departamento 4C', 'Surquillo', 'Departamento', 'Disponible', 1410.0),
             ('5A', 'Departamento 5A', 'Surquillo', 'Departamento', 'Disponible', 1600.0),
-            ('2Psjm', 'Segundo Piso SJM', 'SJM', 'Piso', 'Alquilado', 1100.0),
+            ('2P_SJM', 'Segundo Piso SJM', 'SJM', 'Piso', 'Alquilado', 1100.0),
         ]
         p = placeholder
         for row in inmuebles_seed:
@@ -527,7 +561,7 @@ def init_db():
             ('3A', 'Ana Quispe', previous_month_start + datetime.timedelta(days=2), next_month_start + datetime.timedelta(days=28), 1450.0, 5, 'Activo', 'Contrato demo por dos meses'),
             ('3B', 'Carlos Rojas', previous_month_start + datetime.timedelta(days=4), next_month_start + datetime.timedelta(days=27), 1380.0, 8, 'Activo', 'Renovacion automatica'),
             ('4A', 'Lucia Torres', previous_month_start + datetime.timedelta(days=6), next_month_start + datetime.timedelta(days=26), 1520.0, 10, 'Activo', 'Incluye mantenimiento'),
-            ('2Psjm', 'Miguel Huaman', previous_month_start + datetime.timedelta(days=1), next_month_start + datetime.timedelta(days=25), 1100.0, 12, 'Activo', 'Contrato piso SJM'),
+            ('2P_SJM', 'Miguel Huaman', previous_month_start + datetime.timedelta(days=1), next_month_start + datetime.timedelta(days=25), 1100.0, 12, 'Activo', 'Contrato piso SJM'),
         ]
         for codigo, inquilino, fecha_inicio, fecha_fin, monto_mensual, dia_pago, estado, observacion in contract_seed:
             cur.execute(f'SELECT id FROM inmuebles WHERE codigo={placeholder}', (codigo,))
@@ -549,11 +583,11 @@ def init_db():
         ('3A', 'Ana Quispe', previous_period, previous_month_start + datetime.timedelta(days=4), 1450.0, 1450.0, 'Pagado', previous_month_start + datetime.timedelta(days=4), 'Pago completo del mes anterior'),
         ('3B', 'Carlos Rojas', previous_period, previous_month_start + datetime.timedelta(days=7), 1380.0, 1380.0, 'Pagado', previous_month_start + datetime.timedelta(days=8), 'Pago validado'),
         ('4A', 'Lucia Torres', previous_period, previous_month_start + datetime.timedelta(days=9), 1520.0, 1520.0, 'Pagado', previous_month_start + datetime.timedelta(days=10), 'Sin observaciones'),
-        ('2Psjm', 'Miguel Huaman', previous_period, previous_month_start + datetime.timedelta(days=11), 1100.0, 1100.0, 'Pagado', previous_month_start + datetime.timedelta(days=11), 'Pago puntual'),
+        ('2P_SJM', 'Miguel Huaman', previous_period, previous_month_start + datetime.timedelta(days=11), 1100.0, 1100.0, 'Pagado', previous_month_start + datetime.timedelta(days=11), 'Pago puntual'),
         ('3A', 'Ana Quispe', current_period, current_month_start + datetime.timedelta(days=4), 1450.0, 1450.0, 'Pagado', current_month_start + datetime.timedelta(days=4), 'Mes actual cancelado'),
         ('3B', 'Carlos Rojas', current_period, current_month_start + datetime.timedelta(days=7), 1380.0, 690.0, 'Parcial', current_month_start + datetime.timedelta(days=8), 'Pendiente saldo'),
         ('4A', 'Lucia Torres', current_period, current_month_start + datetime.timedelta(days=9), 1520.0, 0.0, 'Pendiente', None, 'Aun sin pago'),
-        ('2Psjm', 'Miguel Huaman', current_period, current_month_start + datetime.timedelta(days=11), 1100.0, 1100.0, 'Pagado', current_month_start + datetime.timedelta(days=11), 'Transferencia recibida'),
+        ('2P_SJM', 'Miguel Huaman', current_period, current_month_start + datetime.timedelta(days=11), 1100.0, 1100.0, 'Pagado', current_month_start + datetime.timedelta(days=11), 'Transferencia recibida'),
     ]
     for inmueble, inquilino, periodo, vencimiento, monto, monto_pagado, estado, fecha_pago, observacion in cobranza_seed:
         cur.execute(
@@ -1038,8 +1072,9 @@ def delete_inmueble(inmueble_id):
 
         # Limpia dependencias para que la eliminación del inmueble no falle por FK.
         write_cur.execute(
-            f'DELETE FROM gestor_cobranzas WHERE LOWER(COALESCE(inmueble, \'\')) = LOWER({p})',
-            (codigo,)
+            f'''DELETE FROM gestor_cobranzas
+                WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(inmueble, ''), '_', ''), '-', ''), ' ', '')) = {p}''',
+            (inmueble_codigo_key(codigo),)
         )
 
         if has_table('pagos'):
@@ -1395,7 +1430,8 @@ def sync_inmuebles_estado(conn, inmueble_ids):
 
 def get_inmueble_renta(conn, codigo_inmueble):
     """Obtiene la renta del inmueble por codigo. Si no existe, retorna 0.0."""
-    if not codigo_inmueble:
+    codigo_normalizado = normalize_inmueble_codigo(codigo_inmueble)
+    if not codigo_normalizado:
         return 0.0
 
     p = get_placeholder()
@@ -1403,9 +1439,9 @@ def get_inmueble_renta(conn, codigo_inmueble):
     cur.execute(
         f'''SELECT monto_renta
             FROM inmuebles
-            WHERE LOWER(COALESCE(codigo, '')) = LOWER({p})
+            WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(codigo, ''), '_', ''), '-', ''), ' ', '')) = {p}
             LIMIT 1''',
-        (str(codigo_inmueble).strip(),)
+        (inmueble_codigo_key(codigo_normalizado),)
     )
     row = cur.fetchone()
     cur.close()
@@ -1429,7 +1465,7 @@ def sync_cobranzas_montos_with_inmuebles(conn):
     inmuebles_rows = read_cur.fetchall()
     renta_by_codigo = {}
     for row in inmuebles_rows:
-        codigo = (row['codigo'] or '').strip().lower()
+        codigo = inmueble_codigo_key(row['codigo'])
         if not codigo:
             continue
         renta_by_codigo[codigo] = float(row['monto_renta'] or 0.0)
@@ -1439,7 +1475,7 @@ def sync_cobranzas_montos_with_inmuebles(conn):
 
     updated = 0
     for row in cobranzas_rows:
-        inmueble_key = (row['inmueble'] or '').strip().lower()
+        inmueble_key = inmueble_codigo_key(row['inmueble'])
         if not inmueble_key or inmueble_key not in renta_by_codigo:
             continue
 
@@ -1494,7 +1530,7 @@ def cobranzas_rentas():
     )
     activos_rows = cur.fetchall()
     codigos_activos = {
-        (row['codigo'] or '').strip().lower()
+        inmueble_codigo_key(row['codigo'])
         for row in activos_rows
         if (row['codigo'] or '').strip()
     }
@@ -1547,7 +1583,8 @@ def cobranzas_rentas():
             row_data = dict(row)
         else:
             row_data = {key: row[key] for key in row.keys()}
-        inmueble_key = (row_data.get('inmueble') or '').strip().lower()
+        inmueble_key = inmueble_codigo_key(row_data.get('inmueble'))
+        row_data['inmueble'] = normalize_inmueble_codigo(row_data.get('inmueble'))
         inquilino_canonico = inquilino_activo_por_inmueble.get(inmueble_key)
         if inquilino_canonico:
             row_data['inquilino'] = inquilino_canonico
@@ -1557,14 +1594,14 @@ def cobranzas_rentas():
 
     rows_periodo = [r for r in rows if (r['periodo'] or '') == periodo_actual]
     inmuebles_by_codigo = {
-        (i['codigo'] or '').strip().lower(): i
+        inmueble_codigo_key(i['codigo']): i
         for i in inmuebles
         if (i['codigo'] or '').strip()
     }
     esperado_activos = 0.0
     for inmueble in inmuebles:
         codigo = (inmueble['codigo'] or '').strip().lower()
-        if codigo and codigo in codigos_activos:
+        if codigo and inmueble_codigo_key(codigo) in codigos_activos:
             esperado_activos += float(inmueble['monto_renta'] or 0)
 
     # Si no hay contratos activos detectados, conserva el comportamiento anterior.
@@ -1581,7 +1618,7 @@ def cobranzas_rentas():
 
     # Incluye inmuebles activos sin registro en el periodo actual como pendiente.
     inmuebles_con_registro_periodo = {
-        (r['inmueble'] or '').strip().lower()
+        inmueble_codigo_key(r['inmueble'])
         for r in rows_periodo
         if (r['inmueble'] or '').strip()
     }
@@ -1662,10 +1699,10 @@ def cobranzas_rentas():
 
     inmuebles_rows = []
     for inmueble in inmuebles:
-        codigo = (inmueble['codigo'] or '').strip()
+        codigo = normalize_inmueble_codigo(inmueble['codigo'])
         match_rows = [
             row for row in rows
-            if ((row['inmueble'] or '').strip().lower() == codigo.lower())
+            if inmueble_codigo_key(row['inmueble']) == inmueble_codigo_key(codigo)
         ]
         latest = None
         if match_rows:
@@ -1680,14 +1717,14 @@ def cobranzas_rentas():
             'descripcion': inmueble['descripcion'],
             'estado': inmueble['estado'],
             'monto_renta': inmueble['monto_renta'],
-            'inquilino': inquilino_activo_por_inmueble.get(codigo.lower()) or (latest['inquilino'] if latest else None),
+            'inquilino': inquilino_activo_por_inmueble.get(inmueble_codigo_key(codigo)) or (latest['inquilino'] if latest else None),
             'periodo': latest['periodo'] if latest else None,
             'monto_pagado': latest['monto_pagado'] if latest else 0,
         })
 
     rows_periodo_by_inmueble = {}
     for row in rows_periodo:
-        inmueble_key = (row['inmueble'] or '').strip().lower()
+        inmueble_key = inmueble_codigo_key(row['inmueble'])
         if not inmueble_key:
             continue
         bucket = rows_periodo_by_inmueble.setdefault(
@@ -1699,11 +1736,11 @@ def cobranzas_rentas():
 
     avance_inmuebles = []
     for inmueble in inmuebles:
-        codigo = (inmueble['codigo'] or '').strip()
-        if codigo.lower() not in codigos_activos:
+        codigo = normalize_inmueble_codigo(inmueble['codigo'])
+        if inmueble_codigo_key(codigo) not in codigos_activos:
             continue
 
-        resumen = rows_periodo_by_inmueble.get(codigo.lower())
+        resumen = rows_periodo_by_inmueble.get(inmueble_codigo_key(codigo))
 
         esperado = float(resumen['esperado']) if resumen else float(inmueble['monto_renta'] or 0)
         pagado_real = float(resumen['pagado']) if resumen else 0.0
@@ -1787,15 +1824,16 @@ def api_get_inquilino(codigo_inmueble):
         p = get_placeholder()
         
         # Obtener el inquilino del contrato activo para este inmueble
+        codigo_key = inmueble_codigo_key(codigo_inmueble)
         cur.execute(
             f'''SELECT DISTINCT i.nombre 
                FROM contratos c
                JOIN inquilinos i ON i.id = c.inquilino_id
                JOIN inmuebles im ON im.id = c.inmueble_id
-               WHERE LOWER(COALESCE(im.codigo, '')) = LOWER({p})
+               WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(im.codigo, ''), '_', ''), '-', ''), ' ', '')) = {p}
                AND LOWER(COALESCE(c.estado, '')) = 'activo'
                LIMIT 1''',
-            (codigo_inmueble.strip(),)
+            (codigo_key,)
         )
         result = cur.fetchone()
         cur.close()
@@ -1819,7 +1857,7 @@ def add_cobranza_renta():
         conn = get_db_connection()
         cur = conn.cursor()
         p = get_placeholder()
-        inmueble_codigo = (request.form.get('inmueble') or '').strip()
+        inmueble_codigo = normalize_inmueble_codigo(request.form.get('inmueble'))
         monto_real = get_inmueble_renta(conn, inmueble_codigo)
         cur.execute(
             f'''INSERT INTO gestor_cobranzas
@@ -2140,7 +2178,7 @@ def edit_cobranza_renta(entry_id):
     p = get_placeholder()
 
     if request.method == 'POST':
-        inmueble_codigo = (request.form.get('inmueble') or '').strip()
+        inmueble_codigo = normalize_inmueble_codigo(request.form.get('inmueble'))
         monto_real = get_inmueble_renta(conn, inmueble_codigo)
         cur.execute(
             f'''UPDATE gestor_cobranzas
