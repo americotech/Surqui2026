@@ -714,7 +714,6 @@
                                     <th>Descripcion</th>
                                     <th>Estado</th>
                                     <th>Inquilino actual</th>
-                                    <th>Periodo actual</th>
                                     <th class="text-end">Renta</th>
                                     <th class="text-end">Pagado</th>
                                 </tr>
@@ -726,14 +725,13 @@
                                     <td>{{ row.descripcion or '-' }}</td>
                                     <td>{{ row.estado or '-' }}</td>
                                     <td>{{ row.inquilino or '-' }}</td>
-                                    <td>{{ row.periodo or '-' }}</td>
                                     <td class="text-end">S/ {{ "%.2f"|format(row.monto_renta or 0) }}</td>
                                     <td class="text-end">S/ {{ "%.2f"|format(row.monto_pagado or 0) }}</td>
                                 </tr>
                                 {% endfor %}
                                 {% if not inmuebles_rows %}
                                 <tr>
-                                    <td colspan="8" class="text-center text-muted py-4">No hay inmuebles registrados.</td>
+                                    <td colspan="6" class="text-center text-muted py-4">No hay inmuebles registrados.</td>
                                 </tr>
                                 {% endif %}
                             </tbody>

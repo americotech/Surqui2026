@@ -1559,7 +1559,7 @@ def cobranzas_rentas():
     for contrato in contratos_rows:
         estado_contrato = (contrato['estado'] or '').strip().lower()
 
-        inmueble_codigo = (contrato['inmueble_codigo'] or '').strip().lower()
+        inmueble_codigo = inmueble_codigo_key(contrato['inmueble_codigo'])
         if estado_contrato == 'activo' and inmueble_codigo and inmueble_codigo not in inquilino_activo_por_inmueble:
             inquilino_activo_por_inmueble[inmueble_codigo] = contrato['inquilino_nombre']
 
