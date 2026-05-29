@@ -1717,7 +1717,7 @@ def cobranzas_rentas():
             'descripcion': inmueble['descripcion'],
             'estado': inmueble['estado'],
             'monto_renta': inmueble['monto_renta'],
-            'inquilino': inquilino_activo_por_inmueble.get(inmueble_codigo_key(codigo)) or (latest['inquilino'] if latest else None),
+            'inquilino': inquilino_activo_por_inmueble.get(inmueble_codigo_key(codigo)),
             'periodo': latest['periodo'] if latest else None,
             'monto_pagado': latest['monto_pagado'] if latest else 0,
         })
