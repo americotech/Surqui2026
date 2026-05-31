@@ -17,15 +17,11 @@
                             <label class="form-label">Inmueble</label>
                             <select name="inmueble" class="form-select" required>
                                 <option value="" disabled selected>Seleccionar inmueble...</option>
-                                <option value="1P">1P</option>
-                                <option value="3A">3A</option>
-                                <option value="3B">3B</option>
-                                <option value="3C">3C</option>
-                                <option value="4A">4A</option>
-                                <option value="4B">4B</option>
-                                <option value="4C">4C</option>
-                                <option value="5A">5A</option>
-                                <option value="2P_SJM">2P_SJM</option>
+                                {% for inmueble in inmuebles %}
+                                <option value="{{ inmueble.codigo }}">
+                                    {{ inmueble.codigo }}{% if inmueble.descripcion %} - {{ inmueble.descripcion }}{% endif %}
+                                </option>
+                                {% endfor %}
                             </select>
                         </div>
                         <div class="col-md-4">

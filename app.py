@@ -1927,9 +1927,17 @@ def add_cobranza_renta():
         conn.close()
         return redirect(url_for('cobranzas_rentas'))
 
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    cur.execute('SELECT id, codigo, descripcion, estado FROM inmuebles ORDER BY codigo ASC, id ASC')
+    inmuebles = cur.fetchall()
+    cur.close()
+    conn.close()
+
     today = datetime.date.today()
     return render_template(
         'add_cobranza_renta.html',
+        inmuebles=inmuebles,
         fecha_default=today.isoformat(),
         periodo_default=f'{today.year}-{today.month:02d}'
     )
