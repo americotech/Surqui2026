@@ -907,10 +907,8 @@ def index():
     gastos_generales_mes_usd = gastos_generales_mes / dolar if dolar else 0.0
     saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father - gastos_generales_mes_usd - total_costo_administrativo_usd
     
-    # Cálculo cuotas
-    start_date = datetime.date(2026, 4, 1)
-    months_passed = (current_date.year - start_date.year) * 12 + (current_date.month - start_date.month)
-    cuotas_pendientes = 13
+    # Cuotas pendientes deshabilitadas: valor fijo en 0.
+    cuotas_pendientes = 0
     
     editable = is_admin()
     return render_template(
