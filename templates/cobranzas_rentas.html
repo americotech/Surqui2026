@@ -172,6 +172,90 @@
             margin-bottom: 18px;
         }
 
+        .period-compare-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+
+        .period-card {
+            background: #fff;
+            border-radius: 14px;
+            padding: 14px 16px;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+            border-top: 4px solid #d9e2ef;
+        }
+
+        .period-card.current { border-top-color: #2563eb; }
+        .period-card.previous { border-top-color: #0ea5a4; }
+
+        .period-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .period-title {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 800;
+            color: #1f3658;
+        }
+
+        .period-badge {
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: #e2e8f0;
+            color: #334155;
+        }
+
+        .period-card.current .period-badge {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .period-card.previous .period-badge {
+            background: #ccfbf1;
+            color: #0f766e;
+        }
+
+        .period-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .metric-label {
+            margin: 0 0 4px;
+            font-size: 11px;
+            color: #7a8ea8;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+        }
+
+        .metric-value {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 800;
+            color: #1f3658;
+            line-height: 1.2;
+        }
+
+        .metric-subvalue {
+            margin: 2px 0 0;
+            font-size: 12px;
+            font-weight: 700;
+            color: #70839c;
+        }
+
         .stat-card {
             background: var(--card);
             border-radius: 14px;
@@ -205,6 +289,7 @@
         .stat-value.green { color: #17a34a; }
         .stat-value.blue { color: #2f67e8; }
         .stat-value.red { color: #dc2626; }
+        .stat-value.warn { color: #b45309; }
 
         .stat-subvalue {
             font-size: 13px;
@@ -440,11 +525,14 @@
         @media (max-width: 992px) {
             .layout { flex-direction: column; }
             .sidebar { width: 100%; }
+            .period-compare-grid { grid-template-columns: 1fr; }
+            .period-metrics { grid-template-columns: 1fr 1fr; }
             .stats-grid { grid-template-columns: 1fr 1fr; }
             .dash-head { flex-direction: column; align-items: flex-start; }
         }
 
         @media (max-width: 640px) {
+            .period-metrics { grid-template-columns: 1fr; }
             .stats-grid { grid-template-columns: 1fr; }
             .topbar { flex-direction: column; align-items: flex-start; }
             .dash-title { font-size: 30px; }
@@ -488,37 +576,93 @@
                 <div class="dash-head">
                     <div>
                         <h2 class="dash-title">Dashboard</h2>
-                        <p class="dash-subtitle">Resumen del periodo - {{ periodo_titulo }}</p>
+                        <p class="dash-subtitle">Comparativo de cobranza: {{ periodo_titulo }} vs {{ periodo_anterior_titulo }}</p>
                     </div>
                     <a href="{{ url_for('add_cobranza_renta') if editable else '#' }}" class="pay-btn {% if not editable %}disabled{% endif %}">{{ '+ Registrar Pago' if editable else 'Solo administrador puede registrar' }}</a>
                 </div>
 
-                <section class="stats-grid">
-                    {% if editable %}
-                    <article class="stat-card blue">
-                        <div class="stat-label">Esperado {{ periodo_titulo }}</div>
-                        <p class="stat-value">S/ {{ "%.2f"|format(esperado_mes) }}</p>
-                        <p class="stat-subvalue">US$ {{ "%.2f"|format(esperado_mes_usd) }} (TC {{ "%.3f"|format(dolar or 0) }})</p>
-                    </article>
-                    {% endif %}
-
-                    <article class="stat-card green">
-                        <div class="stat-label">Recaudado</div>
-                        <p class="stat-value green">S/ {{ "%.2f"|format(recaudado_mes) }}</p>
-                        <p class="stat-subvalue">US$ {{ "%.2f"|format(recaudado_mes_usd) }} (TC {{ "%.3f"|format(dolar or 0) }})</p>
-                        <div class="progress-line">
-                            <span style="width: {{ '%.2f'|format(porcentaje_cobrado if porcentaje_cobrado <= 100 else 100) }}%;"></span>
+                <section class="period-compare-grid">
+                    <article class="period-card current">
+                        <div class="period-head">
+                            <h3 class="period-title">{{ periodo_titulo }}</h3>
+                            <span class="period-badge">Mes actual</span>
+                        </div>
+                        <div class="period-metrics">
+                            {% if editable %}
+                            <div>
+                                <p class="metric-label">Esperado</p>
+                                <p class="metric-value">S/ {{ "%.2f"|format(esperado_mes) }}</p>
+                                <p class="metric-subvalue">US$ {{ "%.2f"|format(esperado_mes_usd) }}</p>
+                            </div>
+                            {% endif %}
+                            <div>
+                                <p class="metric-label">Recaudado</p>
+                                <p class="metric-value">S/ {{ "%.2f"|format(recaudado_mes) }}</p>
+                                <p class="metric-subvalue">US$ {{ "%.2f"|format(recaudado_mes_usd) }}</p>
+                            </div>
+                            <div>
+                                <p class="metric-label">% Cobrado</p>
+                                <p class="metric-value">{{ "%.0f"|format(porcentaje_cobrado) }}%</p>
+                                <div class="progress-line">
+                                    <span style="width: {{ '%.2f'|format(porcentaje_cobrado if porcentaje_cobrado <= 100 else 100) }}%;"></span>
+                                </div>
+                            </div>
                         </div>
                     </article>
 
-                    <article class="stat-card violet">
-                        <div class="stat-label">% Cobrado</div>
-                        <p class="stat-value blue">{{ "%.0f"|format(porcentaje_cobrado) }}%</p>
+                    <article class="period-card previous">
+                        <div class="period-head">
+                            <h3 class="period-title">{{ periodo_anterior_titulo }}</h3>
+                            <span class="period-badge">Mes anterior</span>
+                        </div>
+                        <div class="period-metrics">
+                            {% if editable %}
+                            <div>
+                                <p class="metric-label">Esperado</p>
+                                <p class="metric-value">S/ {{ "%.2f"|format(esperado_mes_anterior) }}</p>
+                                <p class="metric-subvalue">US$ {{ "%.2f"|format(esperado_mes_anterior_usd) }}</p>
+                            </div>
+                            {% endif %}
+                            <div>
+                                <p class="metric-label">Recaudado</p>
+                                <p class="metric-value">S/ {{ "%.2f"|format(recaudado_mes_anterior) }}</p>
+                                <p class="metric-subvalue">US$ {{ "%.2f"|format(recaudado_mes_anterior_usd) }}</p>
+                            </div>
+                            <div>
+                                <p class="metric-label">% Cobrado</p>
+                                <p class="metric-value">{{ "%.0f"|format(porcentaje_cobrado_anterior) }}%</p>
+                                <div class="progress-line">
+                                    <span style="width: {{ '%.2f'|format(porcentaje_cobrado_anterior if porcentaje_cobrado_anterior <= 100 else 100) }}%;"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </article>
+                </section>
+
+                <section class="stats-grid">
+                    <article class="stat-card red">
+                        <div class="stat-label">Inmuebles pendientes</div>
+                        <p class="stat-value red">{{ pendientes_count }}</p>
                     </article>
 
-                    <article class="stat-card red">
-                        <div class="stat-label">En mora / pendiente</div>
-                        <p class="stat-value red">{{ pendientes_count }}</p>
+                    <article class="stat-card violet">
+                        <div class="stat-label">Deuda pendiente total</div>
+                        <p class="stat-value red">S/ {{ "%.2f"|format(deuda_total_pendiente) }}</p>
+                        <p class="stat-subvalue">US$ {{ "%.2f"|format(deuda_total_pendiente_usd) }} (TC {{ "%.3f"|format(dolar or 0) }})</p>
+                    </article>
+
+                    <article class="stat-card blue">
+                        <div class="stat-label">Pendientes vencidas</div>
+                        <p class="stat-value">{{ vencidas_count }}</p>
+                        <p class="stat-subvalue">Con fecha de vencimiento anterior a hoy</p>
+                    </article>
+
+                    {% set atraso_tone = 'green' if dias_atraso_promedio <= 3 else ('warn' if dias_atraso_promedio <= 10 else 'red') %}
+                    {% set atraso_hint = 'Atraso controlado' if dias_atraso_promedio <= 3 else ('Riesgo moderado de mora' if dias_atraso_promedio <= 10 else 'Riesgo alto de mora') %}
+                    <article class="stat-card green">
+                        <div class="stat-label">Atraso promedio</div>
+                        <p class="stat-value {{ atraso_tone }}">{{ "%.0f"|format(dias_atraso_promedio) }} dias</p>
+                        <p class="stat-subvalue">{{ atraso_hint }} | Solo sobre inmuebles vencidos</p>
                     </article>
                 </section>
 

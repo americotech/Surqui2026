@@ -1535,6 +1535,9 @@ def cobranzas_rentas():
 
     today = datetime.date.today()
     periodo_actual = f'{today.year}-{today.month:02d}'
+    primer_dia_mes_actual = today.replace(day=1)
+    ultimo_dia_mes_anterior = primer_dia_mes_actual - datetime.timedelta(days=1)
+    periodo_anterior = f'{ultimo_dia_mes_anterior.year}-{ultimo_dia_mes_anterior.month:02d}'
 
     cur.execute(
         """
@@ -1591,6 +1594,7 @@ def cobranzas_rentas():
     rows = rows_relacionados
 
     rows_periodo = [r for r in rows if (r['periodo'] or '') == periodo_actual]
+    rows_periodo_anterior = [r for r in rows if (r['periodo'] or '') == periodo_anterior]
     inmuebles_by_codigo = {
         inmueble_codigo_key(i['codigo']): i
         for i in inmuebles
@@ -1608,6 +1612,12 @@ def cobranzas_rentas():
     esperado_mes_usd = (esperado_mes / dolar) if dolar else 0.0
     recaudado_mes_usd = (recaudado_mes / dolar) if dolar else 0.0
     porcentaje_cobrado = (recaudado_mes / esperado_mes * 100) if esperado_mes else 0.0
+
+    esperado_mes_anterior = sum(float(r['monto'] or 0) for r in rows_periodo_anterior)
+    recaudado_mes_anterior = sum(float(r['monto_pagado'] or 0) for r in rows_periodo_anterior)
+    esperado_mes_anterior_usd = (esperado_mes_anterior / dolar) if dolar else 0.0
+    recaudado_mes_anterior_usd = (recaudado_mes_anterior / dolar) if dolar else 0.0
+    porcentaje_cobrado_anterior = (recaudado_mes_anterior / esperado_mes_anterior * 100) if esperado_mes_anterior else 0.0
 
     pendientes_periodo = [
         r for r in rows_periodo
@@ -1659,6 +1669,25 @@ def cobranzas_rentas():
         key=lambda r: (str(r['vencimiento'] or ''), int(r['id'] or 0)),
     )
     pendientes_count = len(pendientes_periodo)
+    deuda_total_pendiente = sum(
+        max(float(r['monto'] or 0) - float(r['monto_pagado'] or 0), 0.0)
+        for r in pendientes_periodo
+    )
+    deuda_total_pendiente_usd = (deuda_total_pendiente / dolar) if dolar else 0.0
+
+    filas_vencidas = []
+    for r in pendientes_periodo:
+        vencimiento = r.get('vencimiento')
+        if isinstance(vencimiento, datetime.datetime):
+            vencimiento = vencimiento.date()
+        if isinstance(vencimiento, datetime.date) and vencimiento < today:
+            filas_vencidas.append(r)
+
+    vencidas_count = len(filas_vencidas)
+    dias_atraso_promedio = (
+        sum((today - (r['vencimiento'].date() if isinstance(r['vencimiento'], datetime.datetime) else r['vencimiento'])).days for r in filas_vencidas) / vencidas_count
+        if vencidas_count else 0.0
+    )
 
     historial_rows = sorted(
         rows,
@@ -1778,6 +1807,7 @@ def cobranzas_rentas():
 
     fecha_hoy = format_spanish_datetime(today)
     periodo_titulo = f"{MESES_ES[today.month - 1].capitalize()} {today.year}"
+    periodo_anterior_titulo = f"{MESES_ES[ultimo_dia_mes_anterior.month - 1].capitalize()} {ultimo_dia_mes_anterior.year}"
 
     cur.close()
     conn.close()
@@ -1793,7 +1823,16 @@ def cobranzas_rentas():
         recaudado_mes=recaudado_mes,
         recaudado_mes_usd=recaudado_mes_usd,
         porcentaje_cobrado=porcentaje_cobrado,
+        esperado_mes_anterior=esperado_mes_anterior,
+        esperado_mes_anterior_usd=esperado_mes_anterior_usd,
+        recaudado_mes_anterior=recaudado_mes_anterior,
+        recaudado_mes_anterior_usd=recaudado_mes_anterior_usd,
+        porcentaje_cobrado_anterior=porcentaje_cobrado_anterior,
         pendientes_count=pendientes_count,
+        deuda_total_pendiente=deuda_total_pendiente,
+        deuda_total_pendiente_usd=deuda_total_pendiente_usd,
+        vencidas_count=vencidas_count,
+        dias_atraso_promedio=dias_atraso_promedio,
         pendientes_rows=pendientes_periodo,
         historial_rows=historial_rows,
         inmuebles=inmuebles,
@@ -1808,6 +1847,7 @@ def cobranzas_rentas():
         historial_estado=historial_estado,
         fecha_hoy=fecha_hoy,
         periodo_titulo=periodo_titulo,
+        periodo_anterior_titulo=periodo_anterior_titulo,
         total_registros=total_registros,
         avance_inmuebles=avance_inmuebles,
     )
