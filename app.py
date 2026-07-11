@@ -1613,7 +1613,9 @@ def cobranzas_rentas():
     recaudado_mes_usd = (recaudado_mes / dolar) if dolar else 0.0
     porcentaje_cobrado = (recaudado_mes / esperado_mes * 100) if esperado_mes else 0.0
 
-    esperado_mes_anterior = sum(float(r['monto'] or 0) for r in rows_periodo_anterior)
+    esperado_mes_anterior_base = sum(float(r['monto'] or 0) for r in rows_periodo_anterior)
+    # Mantiene criterio consistente con el mes actual cuando no hay filas historicas del periodo.
+    esperado_mes_anterior = esperado_mes_anterior_base if esperado_mes_anterior_base > 0 else esperado_activos
     recaudado_mes_anterior = sum(float(r['monto_pagado'] or 0) for r in rows_periodo_anterior)
     esperado_mes_anterior_usd = (esperado_mes_anterior / dolar) if dolar else 0.0
     recaudado_mes_anterior_usd = (recaudado_mes_anterior / dolar) if dolar else 0.0
