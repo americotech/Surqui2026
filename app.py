@@ -905,7 +905,7 @@ def index():
     total_ingreso_dolares = total_ingreso_neto / dolar if dolar else 0.0
     total_costo_administrativo_usd = total_costo_administrativo / dolar if dolar else 0.0
     gastos_generales_mes_usd = gastos_generales_mes / dolar if dolar else 0.0
-    saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father - gastos_generales_mes_usd - total_costo_administrativo_usd
+    saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father - total_costo_administrativo_usd
     saldo_father = saldo_mother * 0.5
     
     # Cuotas pendientes deshabilitadas: valor fijo en 0.
