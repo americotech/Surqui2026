@@ -891,8 +891,9 @@ def index():
     for dep in inmuebles_rows:
         porcentaje = normalize_percentage(dep['porcentaje'], 30.0)
         monto_renta = to_float(dep['monto_renta'])
+        sunat = to_float(dep['sunat']) if dep['sunat'] is not None else 0.0
         costo_administrativo = monto_renta * (porcentaje / 100)
-        ingreso_neto = monto_renta - costo_administrativo
+        ingreso_neto = monto_renta - sunat
         inmuebles.append({
             'id': dep['id'],
             'codigo': dep['codigo'],
