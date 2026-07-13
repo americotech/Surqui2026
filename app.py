@@ -222,6 +222,17 @@ def ensure_inmuebles_porcentaje_column(conn, cur):
             )
             conn.commit()
         cur.execute('UPDATE inmuebles SET porcentaje = %s WHERE porcentaje IS NULL', (default_percentage,))
+        # Columna sunat
+        cur.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'inmuebles' AND column_name = 'sunat'
+            """
+        )
+        if not cur.fetchone():
+            cur.execute('ALTER TABLE inmuebles ADD COLUMN sunat REAL DEFAULT 0.0')
+            conn.commit()
     else:
         cur.execute('PRAGMA table_info(inmuebles)')
         columns = {row[1] for row in cur.fetchall()}
@@ -229,6 +240,11 @@ def ensure_inmuebles_porcentaje_column(conn, cur):
             cur.execute('ALTER TABLE inmuebles ADD COLUMN porcentaje REAL DEFAULT 30.0')
             conn.commit()
         cur.execute('UPDATE inmuebles SET porcentaje = ? WHERE porcentaje IS NULL', (default_percentage,))
+        cur.execute('PRAGMA table_info(inmuebles)')
+        columns = {row[1] for row in cur.fetchall()}
+        if 'sunat' not in columns:
+            cur.execute('ALTER TABLE inmuebles ADD COLUMN sunat REAL DEFAULT 0.0')
+            conn.commit()
 
 
 MESES_ES = [
@@ -848,7 +864,7 @@ def index():
     current_date = datetime.date.today()
 
     try:
-        cur.execute('SELECT id, codigo, descripcion, monto_renta, porcentaje FROM inmuebles ORDER BY id ASC')
+        cur.execute('SELECT id, codigo, descripcion, monto_renta, porcentaje, sunat FROM inmuebles ORDER BY id ASC')
         inmuebles_rows = cur.fetchall()
         dolar = get_dolar_rate(conn, cur)
         gasto_father = get_gasto_father(conn, cur)
@@ -885,6 +901,7 @@ def index():
             'porcentaje': porcentaje,
             'costo_administrativo': costo_administrativo,
             'ingreso_neto': ingreso_neto,
+            'sunat': to_float(dep['sunat']) if dep['sunat'] is not None else 0.0,
         })
 
     # Orden visual del panel: 1P, luego 2P, y SJM al final (3P_SJM ultimo).
@@ -997,13 +1014,14 @@ def update():
                 (dolar_a_guardar, gasto_father_a_guardar, pago_cuota_a_guardar)
             )
     
-    # Update inmuebles (renta y porcentaje)
+    # Update inmuebles (renta, porcentaje y sunat)
     for inmueble_id in request.form.getlist('id'):
         renta = to_float(request.form.get(f'renta_{inmueble_id}'))
         porcentaje = normalize_percentage(request.form.get(f'porcentaje_{inmueble_id}'), 30.0)
+        sunat = to_float(request.form.get(f'sunat_{inmueble_id}'))
         cur.execute(
-            f'UPDATE inmuebles SET monto_renta={placeholder}, porcentaje={placeholder} WHERE id={placeholder}',
-            (renta, porcentaje, int(inmueble_id))
+            f'UPDATE inmuebles SET monto_renta={placeholder}, porcentaje={placeholder}, sunat={placeholder} WHERE id={placeholder}',
+            (renta, porcentaje, sunat, int(inmueble_id))
         )
     
     conn.commit()
