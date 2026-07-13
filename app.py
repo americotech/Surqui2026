@@ -906,6 +906,7 @@ def index():
     total_costo_administrativo_usd = total_costo_administrativo / dolar if dolar else 0.0
     gastos_generales_mes_usd = gastos_generales_mes / dolar if dolar else 0.0
     saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father - gastos_generales_mes_usd - total_costo_administrativo_usd
+    saldo_father = saldo_mother * 0.5
     
     # Cuotas pendientes deshabilitadas: valor fijo en 0.
     cuotas_pendientes = 0
@@ -924,6 +925,7 @@ def index():
         gastos_generales_mes=gastos_generales_mes,
         gastos_generales_mes_usd=gastos_generales_mes_usd,
         saldo_mother=saldo_mother,
+        saldo_father=saldo_father,
         cuotas_pendientes=cuotas_pendientes,
         editable=editable,
         current_date=current_date.strftime("%d/%m/%Y"),

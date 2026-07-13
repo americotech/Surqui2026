@@ -119,7 +119,8 @@
                             </div>
                             <p class="mb-1 text-start"><strong>Gasto Administrativo (Total):</strong> S/. {{ "%.2f"|format(total_costo_administrativo) }} (USD {{ "%.2f"|format(total_costo_administrativo_usd) }})</p>
                             <p class="mb-1 text-start"><strong>Gastos Generales (Mes Actual):</strong> S/. {{ "%.2f"|format(gastos_generales_mes) }} (USD {{ "%.2f"|format(gastos_generales_mes_usd) }})</p>
-                            <div>
+                            <div class="d-flex gap-2">
+                                <p class="mb-0 bg-primary text-white p-2 rounded text-start"><strong>Saldo Father:</strong> {{ "%.2f"|format(saldo_father) }} USD</p>
                                 <p class="mb-0 bg-success text-white p-2 rounded text-start"><strong>Saldo Mother:</strong> {{ "%.2f"|format(saldo_mother) }} USD</p>
                             </div>
                         </div>
