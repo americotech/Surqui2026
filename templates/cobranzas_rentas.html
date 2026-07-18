@@ -808,6 +808,7 @@
                                     <th>Inmueble</th>
                                     <th>Inquilino</th>
                                     <th>Vencimiento</th>
+                                    <th>Fecha de Pago</th>
                                     <th class="text-end">Monto</th>
                                     <th class="text-end">Pagado</th>
                                     <th>Estado</th>
@@ -823,6 +824,7 @@
                                     <td>{{ row.inmueble }}</td>
                                     <td>{{ row.inquilino or '-' }}</td>
                                     <td>{{ row.vencimiento or '-' }}</td>
+                                    <td>{{ row.fecha_pago or '-' }}</td>
                                     <td class="text-end">S/ {{ "%.2f"|format(row.monto or 0) }}</td>
                                     <td class="text-end">S/ {{ "%.2f"|format(row.monto_pagado or 0) }}</td>
                                     <td>
@@ -847,7 +849,7 @@
                                 {% endfor %}
                                 {% if not historial_rows %}
                                 <tr>
-                                    <td colspan="8" class="text-center text-muted py-4">No hay registros en el historial.</td>
+                                    <td colspan="{{ 9 if editable else 8 }}" class="text-center text-muted py-4">No hay registros en el historial.</td>
                                 </tr>
                                 {% endif %}
                             </tbody>

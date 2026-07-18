@@ -79,6 +79,7 @@
             const inmuebleSelect = document.querySelector('select[name="inmueble"]');
             const inquilinoField = document.getElementById('inquilino-field');
             const montoField = document.getElementById('monto-field');
+            const vencimientoField = document.querySelector('input[name="vencimiento"]');
             const inquilinoStatus = document.getElementById('inquilino-status');
 
             if (!inmuebleSelect || !inquilinoField || !montoField) {
@@ -88,6 +89,7 @@
             inmuebleSelect.addEventListener('change', async function() {
                 const codigo = this.value;
                 if (!codigo) {
+                    vencimientoField.value = '';
                     return;
                 }
 
@@ -105,14 +107,15 @@
                     }
 
                     montoField.value = Number(data.monto_renta || 0).toFixed(2);
+                    vencimientoField.value = data.fecha_inicio || '';
 
                     if (data.inquilino) {
                         inquilinoField.value = data.inquilino;
-                        inquilinoStatus.textContent = '✓ Inquilino y monto actualizados';
+                        inquilinoStatus.textContent = '✓ Inquilino, monto y vencimiento actualizados';
                         inquilinoStatus.style.color = 'green';
                     } else {
                         inquilinoField.value = '';
-                        inquilinoStatus.textContent = '⚠ Monto actualizado, sin contrato activo para inquilino';
+                        inquilinoStatus.textContent = '⚠ Monto y vencimiento actualizados, sin contrato activo para inquilino';
                         inquilinoStatus.style.color = '#b26a00';
                     }
                 } catch (error) {
@@ -120,6 +123,10 @@
                     inquilinoStatus.style.color = 'red';
                 }
             });
+
+            if (inmuebleSelect.value) {
+                inmuebleSelect.dispatchEvent(new Event('change'));
+            }
         });
     </script>
 </body>

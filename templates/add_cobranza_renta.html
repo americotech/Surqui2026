@@ -89,6 +89,7 @@
             const inmuebleSelect = document.querySelector('select[name="inmueble"]');
             const inquilinoField = document.getElementById('inquilino-field');
             const montoField = document.getElementById('monto-field');
+            const vencimientoField = document.querySelector('input[name="vencimiento"]');
             const inquilinoStatus = document.getElementById('inquilino-status');
 
             inmuebleSelect.addEventListener('change', async function() {
@@ -97,6 +98,7 @@
                 if (!codigo) {
                     inquilinoField.value = '';
                     montoField.value = '';
+                    vencimientoField.value = '';
                     inquilinoStatus.textContent = '';
                     return;
                 }
@@ -109,25 +111,28 @@
                     if (data.success) {
                         const monto = Number(data.monto_renta || 0);
                         montoField.value = monto.toFixed(2);
+                        vencimientoField.value = data.fecha_inicio || '';
 
                         if (data.inquilino) {
                             inquilinoField.value = data.inquilino;
-                            inquilinoStatus.textContent = '✓ Inquilino y monto obtenidos del contrato activo';
+                            inquilinoStatus.textContent = '✓ Inquilino, monto y vencimiento obtenidos del contrato activo';
                             inquilinoStatus.style.color = 'green';
                         } else {
                             inquilinoField.value = '';
-                            inquilinoStatus.textContent = 'Monto cargado, pero no se encontró inquilino activo';
+                            inquilinoStatus.textContent = 'Monto y vencimiento cargados, pero no se encontró inquilino activo';
                             inquilinoStatus.style.color = 'orange';
                         }
                     } else {
                         inquilinoField.value = '';
                         montoField.value = '';
+                        vencimientoField.value = '';
                         inquilinoStatus.textContent = '✗ ' + (data.message || 'No se encontró información del inmueble');
                         inquilinoStatus.style.color = 'red';
                     }
                 } catch (error) {
                     inquilinoField.value = '';
                     montoField.value = '';
+                    vencimientoField.value = '';
                     inquilinoStatus.textContent = '✗ Error al obtener datos del inmueble: ' + error.message;
                     inquilinoStatus.style.color = 'red';
                 }

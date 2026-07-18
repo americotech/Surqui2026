@@ -206,6 +206,45 @@ def normalize_inmueble_codigo(value):
     return code
 
 
+def get_active_contract_data(conn, codigo_inmueble):
+    """Return active contract data for an inmueble code, if available."""
+    cur = get_cursor(conn)
+    p = get_placeholder()
+    codigo_normalizado = normalize_inmueble_codigo(codigo_inmueble)
+    codigo_key = inmueble_codigo_key(codigo_normalizado)
+
+    cur.execute(
+        f'''SELECT DISTINCT i.nombre, c.fecha_inicio
+           FROM contratos c
+           JOIN inquilinos i ON i.id = c.inquilino_id
+           JOIN inmuebles im ON im.id = c.inmueble_id
+           WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(im.codigo, ''), '_', ''), '-', ''), ' ', '')) = {p}
+           AND LOWER(COALESCE(c.estado, '')) = 'activo'
+           LIMIT 1''',
+        (codigo_key,)
+    )
+    row = cur.fetchone()
+    cur.close()
+
+    if not row:
+        return {'inquilino': '', 'fecha_inicio': None}
+
+    if isinstance(row, dict):
+        inquilino = row.get('nombre') or ''
+        fecha_inicio = row.get('fecha_inicio')
+    else:
+        inquilino = row[0] if len(row) > 0 else ''
+        fecha_inicio = row[1] if len(row) > 1 else None
+
+    if isinstance(fecha_inicio, datetime.datetime):
+        fecha_inicio = fecha_inicio.date()
+
+    return {
+        'inquilino': inquilino or '',
+        'fecha_inicio': fecha_inicio.isoformat() if isinstance(fecha_inicio, datetime.date) else None,
+    }
+
+
 def ensure_inmuebles_porcentaje_column(conn, cur):
     default_percentage = 30.0
     if get_database_url():
@@ -1914,36 +1953,15 @@ def api_get_inmueble_data(codigo_inmueble):
     """API para obtener inquilino activo y renta del inmueble."""
     try:
         conn = get_db_connection()
-        cur = get_cursor(conn)
-        p = get_placeholder()
-
         codigo_normalizado = normalize_inmueble_codigo(codigo_inmueble)
-        codigo_key = inmueble_codigo_key(codigo_normalizado)
-
-        cur.execute(
-            f'''SELECT DISTINCT i.nombre
-               FROM contratos c
-               JOIN inquilinos i ON i.id = c.inquilino_id
-               JOIN inmuebles im ON im.id = c.inmueble_id
-               WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(im.codigo, ''), '_', ''), '-', ''), ' ', '')) = {p}
-               AND LOWER(COALESCE(c.estado, '')) = 'activo'
-               LIMIT 1''',
-            (codigo_key,)
-        )
-        tenant_row = cur.fetchone()
-
+        contract_data = get_active_contract_data(conn, codigo_normalizado)
         monto_renta = get_inmueble_renta(conn, codigo_normalizado)
-
-        cur.close()
         conn.close()
-
-        inquilino = ''
-        if tenant_row:
-            inquilino = tenant_row['nombre'] if isinstance(tenant_row, dict) else tenant_row[0]
 
         return {
             'success': True,
-            'inquilino': inquilino or '',
+            'inquilino': contract_data['inquilino'],
+            'fecha_inicio': contract_data['fecha_inicio'],
             'monto_renta': float(monto_renta or 0.0),
             'codigo': codigo_normalizado,
         }
@@ -1951,6 +1969,7 @@ def api_get_inmueble_data(codigo_inmueble):
         return {
             'success': False,
             'inquilino': '',
+            'fecha_inicio': None,
             'monto_renta': 0.0,
             'message': str(e),
         }
@@ -1966,6 +1985,9 @@ def add_cobranza_renta():
         cur = conn.cursor()
         p = get_placeholder()
         inmueble_codigo = normalize_inmueble_codigo(request.form.get('inmueble'))
+        vencimiento = (request.form.get('vencimiento') or '').strip()
+        if not vencimiento:
+            vencimiento = get_active_contract_data(conn, inmueble_codigo)['fecha_inicio']
         monto_real = get_inmueble_renta(conn, inmueble_codigo)
         cur.execute(
             f'''INSERT INTO gestor_cobranzas
@@ -1975,7 +1997,7 @@ def add_cobranza_renta():
                 inmueble_codigo,
                 request.form.get('inquilino'),
                 request.form.get('periodo'),
-                request.form.get('vencimiento') or None,
+                vencimiento or None,
                 monto_real,
                 to_float(request.form.get('monto_pagado') or 0),
                 request.form.get('estado') or 'Pendiente',
@@ -1999,7 +2021,7 @@ def add_cobranza_renta():
     return render_template(
         'add_cobranza_renta.html',
         inmuebles=inmuebles,
-        fecha_default=today.isoformat(),
+        fecha_default='',
         periodo_default=f'{today.year}-{today.month:02d}'
     )
 
@@ -2295,6 +2317,9 @@ def edit_cobranza_renta(entry_id):
 
     if request.method == 'POST':
         inmueble_codigo = normalize_inmueble_codigo(request.form.get('inmueble'))
+        vencimiento = (request.form.get('vencimiento') or '').strip()
+        if not vencimiento:
+            vencimiento = get_active_contract_data(conn, inmueble_codigo)['fecha_inicio']
         monto_real = get_inmueble_renta(conn, inmueble_codigo)
         cur.execute(
             f'''UPDATE gestor_cobranzas
@@ -2305,7 +2330,7 @@ def edit_cobranza_renta(entry_id):
                 inmueble_codigo,
                 request.form.get('inquilino'),
                 request.form.get('periodo'),
-                request.form.get('vencimiento') or None,
+                vencimiento or None,
                 monto_real,
                 to_float(request.form.get('monto_pagado') or 0),
                 request.form.get('estado') or 'Pendiente',
