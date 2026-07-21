@@ -1602,6 +1602,7 @@ def cobranzas_rentas():
     cur.execute(
         """
         SELECT c.id, c.inquilino_id, c.inmueble_id, c.estado, c.monto_mensual,
+             c.fecha_inicio, c.dia_pago,
                i.codigo AS inmueble_codigo, i.descripcion AS inmueble_descripcion,
                q.nombre AS inquilino_nombre
         FROM contratos c
@@ -1614,15 +1615,47 @@ def cobranzas_rentas():
 
     cur.execute('SELECT id, nombre, dni, telefono, email FROM inquilinos ORDER BY nombre ASC, id ASC')
     inquilinos = cur.fetchall()
+    inquilinos_validos = {
+        (inquilino['nombre'] or '').strip().lower()
+        for inquilino in inquilinos
+        if (inquilino['nombre'] or '').strip()
+    }
 
     inquilino_activo_por_inmueble = {}
+    vencimiento_dia_activo_por_inmueble = {}
     contrato_por_inquilino = {}
+
+    def _extract_due_day(contrato_row):
+        dia_pago = contrato_row.get('dia_pago')
+        if dia_pago:
+            try:
+                dia_pago_int = int(dia_pago)
+                if 1 <= dia_pago_int <= 31:
+                    return dia_pago_int
+            except (TypeError, ValueError):
+                pass
+
+        fecha_inicio = contrato_row.get('fecha_inicio')
+        if isinstance(fecha_inicio, datetime.datetime):
+            fecha_inicio = fecha_inicio.date()
+        if isinstance(fecha_inicio, datetime.date):
+            return fecha_inicio.day
+        if isinstance(fecha_inicio, str):
+            try:
+                return datetime.date.fromisoformat(fecha_inicio[:10]).day
+            except ValueError:
+                return None
+        return None
+
     for contrato in contratos_rows:
         estado_contrato = (contrato['estado'] or '').strip().lower()
 
         inmueble_codigo = inmueble_codigo_key(contrato['inmueble_codigo'])
         if estado_contrato == 'activo' and inmueble_codigo and inmueble_codigo not in inquilino_activo_por_inmueble:
             inquilino_activo_por_inmueble[inmueble_codigo] = contrato['inquilino_nombre']
+            due_day = _extract_due_day(contrato)
+            if due_day:
+                vencimiento_dia_activo_por_inmueble[inmueble_codigo] = due_day
 
         inquilino_id = contrato['inquilino_id']
         if not inquilino_id:
@@ -1637,6 +1670,15 @@ def cobranzas_rentas():
         if estado_contrato == 'activo' and estado_existente != 'activo':
             contrato_por_inquilino[inquilino_id] = contrato
 
+    vencimiento_dia_por_inquilino = {}
+    for contrato in contrato_por_inquilino.values():
+        inquilino_nombre = (contrato.get('inquilino_nombre') or '').strip().lower()
+        if not inquilino_nombre:
+            continue
+        due_day = _extract_due_day(contrato)
+        if due_day:
+            vencimiento_dia_por_inquilino[inquilino_nombre] = due_day
+
     # Normaliza historial/pendientes con la relacion canonica inmueble -> inquilino activo.
     rows_relacionados = []
     for row in rows:
@@ -1647,7 +1689,8 @@ def cobranzas_rentas():
         inmueble_key = inmueble_codigo_key(row_data.get('inmueble'))
         row_data['inmueble'] = normalize_inmueble_codigo(row_data.get('inmueble'))
         inquilino_canonico = inquilino_activo_por_inmueble.get(inmueble_key)
-        if inquilino_canonico:
+        inquilino_actual = (row_data.get('inquilino') or '').strip().lower()
+        if inquilino_canonico and (not inquilino_actual or inquilino_actual == 'sebo' or inquilino_actual not in inquilinos_validos):
             row_data['inquilino'] = inquilino_canonico
         rows_relacionados.append(row_data)
 
@@ -1751,27 +1794,20 @@ def cobranzas_rentas():
         if vencidas_count else 0.0
     )
 
-    inquilinos_validos = {
-        (inquilino['nombre'] or '').strip().lower()
-        for inquilino in inquilinos
-        if (inquilino['nombre'] or '').strip()
-    }
+    def _period_due_date(periodo, due_day):
+        if not periodo or not due_day:
+            return None
+        try:
+            year_str, month_str = str(periodo).strip().split('-', 1)
+            year = int(year_str)
+            month = int(month_str)
+            if month < 1 or month > 12:
+                return None
+        except (AttributeError, TypeError, ValueError):
+            return None
 
-    def _is_valid_due_date(value):
-        if isinstance(value, datetime.datetime):
-            return True
-        if isinstance(value, datetime.date):
-            return True
-        if isinstance(value, str):
-            raw = value.strip()
-            if not raw:
-                return False
-            try:
-                datetime.date.fromisoformat(raw)
-                return True
-            except ValueError:
-                return False
-        return False
+        day = max(1, min(int(due_day), calendar.monthrange(year, month)[1]))
+        return datetime.date(year, month, day)
 
     historial_base_rows = []
     for row in rows:
@@ -1781,9 +1817,16 @@ def cobranzas_rentas():
             continue
         if inquilino_key not in inquilinos_validos:
             continue
-        if not _is_valid_due_date(row.get('vencimiento')):
+
+        inmueble_key = inmueble_codigo_key(row.get('inmueble'))
+        due_day = vencimiento_dia_por_inquilino.get(inquilino_key) or vencimiento_dia_activo_por_inmueble.get(inmueble_key)
+        due_date = _period_due_date(row.get('periodo'), due_day)
+        if not due_date:
             continue
-        historial_base_rows.append(row)
+
+        row_historial = dict(row)
+        row_historial['vencimiento'] = due_date
+        historial_base_rows.append(row_historial)
 
     historial_rows = sorted(
         historial_base_rows,
