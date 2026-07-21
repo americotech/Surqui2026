@@ -1751,14 +1751,48 @@ def cobranzas_rentas():
         if vencidas_count else 0.0
     )
 
+    inquilinos_validos = {
+        (inquilino['nombre'] or '').strip().lower()
+        for inquilino in inquilinos
+        if (inquilino['nombre'] or '').strip()
+    }
+
+    def _is_valid_due_date(value):
+        if isinstance(value, datetime.datetime):
+            return True
+        if isinstance(value, datetime.date):
+            return True
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return False
+            try:
+                datetime.date.fromisoformat(raw)
+                return True
+            except ValueError:
+                return False
+        return False
+
+    historial_base_rows = []
+    for row in rows:
+        inquilino_nombre = (row.get('inquilino') or '').strip()
+        inquilino_key = inquilino_nombre.lower()
+        if not inquilino_key or inquilino_key == 'sebo':
+            continue
+        if inquilino_key not in inquilinos_validos:
+            continue
+        if not _is_valid_due_date(row.get('vencimiento')):
+            continue
+        historial_base_rows.append(row)
+
     historial_rows = sorted(
-        rows,
+        historial_base_rows,
         key=lambda r: ((r['periodo'] or ''), str(r['vencimiento'] or ''), r['id']),
         reverse=True,
     )
 
-    historial_periodos = sorted({(r['periodo'] or '').strip() for r in rows if (r['periodo'] or '').strip()}, reverse=True)
-    historial_inquilinos = sorted({(r['inquilino'] or '').strip() for r in rows if (r['inquilino'] or '').strip()})
+    historial_periodos = sorted({(r['periodo'] or '').strip() for r in historial_base_rows if (r['periodo'] or '').strip()}, reverse=True)
+    historial_inquilinos = sorted({(r['inquilino'] or '').strip() for r in historial_base_rows if (r['inquilino'] or '').strip()})
 
     if historial_periodo:
         historial_rows = [r for r in historial_rows if (r['periodo'] or '').strip() == historial_periodo]
