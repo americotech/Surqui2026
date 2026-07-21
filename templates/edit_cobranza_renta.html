@@ -11,6 +11,9 @@
         <div class="card shadow-sm">
             <div class="card-body">
                 <h3 class="mb-4">Editar Cobranza #{{ entry.id }}</h3>
+                {% if error %}
+                <div class="alert alert-danger" role="alert">{{ error }}</div>
+                {% endif %}
                 <form method="POST">
                     <div class="row g-3">
                         <div class="col-md-4">
@@ -34,11 +37,12 @@
                         </div>
                         <div class="col-md-4">
                             <label class="form-label">Período</label>
-                            <input type="text" name="periodo" class="form-control" value="{{ entry.periodo }}" required>
+                            <input type="text" name="periodo" class="form-control" id="periodo-field" value="{{ entry.periodo }}" required>
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Fecha Vencimiento</label>
-                            <input type="date" name="vencimiento" class="form-control" value="{{ entry.vencimiento or '' }}">
+                            <input type="date" name="vencimiento" class="form-control" id="vencimiento-field" value="{{ entry.vencimiento or '' }}" readonly>
+                            <small class="text-muted">Se calcula automaticamente segun contrato real (inquilino + inmueble + periodo).</small>
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Fecha Pago</label>
@@ -74,16 +78,46 @@
     </div>
 
     <script>
-        // En edición, sincroniza inquilino y monto al cambiar el inmueble.
+        // En edicion, sincroniza inquilino, monto y vencimiento real al cambiar datos clave.
         document.addEventListener('DOMContentLoaded', function() {
             const inmuebleSelect = document.querySelector('select[name="inmueble"]');
             const inquilinoField = document.getElementById('inquilino-field');
             const montoField = document.getElementById('monto-field');
-            const vencimientoField = document.querySelector('input[name="vencimiento"]');
+            const periodoField = document.getElementById('periodo-field');
+            const vencimientoField = document.getElementById('vencimiento-field');
             const inquilinoStatus = document.getElementById('inquilino-status');
 
-            if (!inmuebleSelect || !inquilinoField || !montoField) {
+            if (!inmuebleSelect || !inquilinoField || !montoField || !periodoField || !vencimientoField) {
                 return;
+            }
+
+            async function refreshRealDueDate() {
+                const inmueble = (inmuebleSelect.value || '').trim();
+                const inquilino = (inquilinoField.value || '').trim();
+                const periodo = (periodoField.value || '').trim();
+
+                if (!inmueble || !inquilino || !periodo) {
+                    return;
+                }
+
+                try {
+                    const params = new URLSearchParams({ inmueble, inquilino, periodo });
+                    const response = await fetch(`/api/get-vencimiento-real?${params.toString()}`);
+                    const data = await response.json();
+
+                    if (!data.success) {
+                        inquilinoStatus.textContent = '⚠ ' + (data.message || 'No se pudo calcular vencimiento real');
+                        inquilinoStatus.style.color = '#b26a00';
+                        return;
+                    }
+
+                    vencimientoField.value = data.vencimiento || '';
+                    inquilinoStatus.textContent = '✓ Inquilino, monto y vencimiento real actualizados';
+                    inquilinoStatus.style.color = 'green';
+                } catch (error) {
+                    inquilinoStatus.textContent = '✗ Error al obtener vencimiento real: ' + error.message;
+                    inquilinoStatus.style.color = 'red';
+                }
             }
 
             inmuebleSelect.addEventListener('change', async function() {
@@ -107,25 +141,31 @@
                     }
 
                     montoField.value = Number(data.monto_renta || 0).toFixed(2);
-                    vencimientoField.value = data.fecha_inicio || '';
 
                     if (data.inquilino) {
                         inquilinoField.value = data.inquilino;
-                        inquilinoStatus.textContent = '✓ Inquilino, monto y vencimiento actualizados';
+                        inquilinoStatus.textContent = '✓ Inquilino y monto actualizados';
                         inquilinoStatus.style.color = 'green';
                     } else {
                         inquilinoField.value = '';
-                        inquilinoStatus.textContent = '⚠ Monto y vencimiento actualizados, sin contrato activo para inquilino';
+                        inquilinoStatus.textContent = '⚠ Monto actualizado, sin contrato activo para inquilino';
                         inquilinoStatus.style.color = '#b26a00';
                     }
+
+                    await refreshRealDueDate();
                 } catch (error) {
                     inquilinoStatus.textContent = '✗ Error al obtener datos: ' + error.message;
                     inquilinoStatus.style.color = 'red';
                 }
             });
 
+            inquilinoField.addEventListener('blur', refreshRealDueDate);
+            periodoField.addEventListener('change', refreshRealDueDate);
+
             if (inmuebleSelect.value) {
                 inmuebleSelect.dispatchEvent(new Event('change'));
+            } else {
+                refreshRealDueDate();
             }
         });
     </script>

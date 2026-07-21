@@ -245,6 +245,108 @@ def get_active_contract_data(conn, codigo_inmueble):
     }
 
 
+def get_real_due_date_for_tenant_inmueble(conn, inquilino_nombre, codigo_inmueble, periodo):
+    """Calculate the contractual due date for a tenant+inmueble on a given YYYY-MM period."""
+    inquilino_key = (inquilino_nombre or '').strip().lower()
+    inmueble_key = inmueble_codigo_key(normalize_inmueble_codigo(codigo_inmueble))
+    periodo_raw = (periodo or '').strip()
+
+    if not inquilino_key or not inmueble_key:
+        return None
+
+    try:
+        year_str, month_str = periodo_raw.split('-', 1)
+        year = int(year_str)
+        month = int(month_str)
+        if month < 1 or month > 12:
+            return None
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+    last_day = calendar.monthrange(year, month)[1]
+    period_start = datetime.date(year, month, 1)
+    period_end = datetime.date(year, month, last_day)
+
+    p = get_placeholder()
+    cur = get_cursor(conn)
+    cur.execute(
+        f'''SELECT c.id, c.fecha_inicio, c.fecha_fin, c.dia_pago, c.estado
+            FROM contratos c
+            JOIN inquilinos q ON q.id = c.inquilino_id
+            JOIN inmuebles i ON i.id = c.inmueble_id
+            WHERE LOWER(TRIM(COALESCE(q.nombre, ''))) = {p}
+              AND LOWER(REPLACE(REPLACE(REPLACE(COALESCE(i.codigo, ''), '_', ''), '-', ''), ' ', '')) = {p}
+              AND COALESCE(c.fecha_inicio, {p}) <= {p}
+              AND (c.fecha_fin IS NULL OR c.fecha_fin >= {p})
+            ORDER BY CASE WHEN LOWER(COALESCE(c.estado, '')) = 'activo' THEN 0 ELSE 1 END,
+                     c.fecha_inicio DESC,
+                     c.id DESC
+            LIMIT 1''',
+        (inquilino_key, inmueble_key, period_start, period_end, period_start)
+    )
+    row = cur.fetchone()
+
+    if not row:
+        cur.execute(
+            f'''SELECT c.id, c.fecha_inicio, c.fecha_fin, c.dia_pago, c.estado
+                FROM contratos c
+                JOIN inquilinos q ON q.id = c.inquilino_id
+                JOIN inmuebles i ON i.id = c.inmueble_id
+                WHERE LOWER(TRIM(COALESCE(q.nombre, ''))) = {p}
+                  AND LOWER(REPLACE(REPLACE(REPLACE(COALESCE(i.codigo, ''), '_', ''), '-', ''), ' ', '')) = {p}
+                ORDER BY CASE WHEN LOWER(COALESCE(c.estado, '')) = 'activo' THEN 0 ELSE 1 END,
+                         c.fecha_inicio DESC,
+                         c.id DESC
+                LIMIT 1''',
+            (inquilino_key, inmueble_key)
+        )
+        row = cur.fetchone()
+
+    if not row:
+        cur.execute(
+            f'''SELECT c.id, c.fecha_inicio, c.fecha_fin, c.dia_pago, c.estado
+                FROM contratos c
+                JOIN inmuebles i ON i.id = c.inmueble_id
+                WHERE LOWER(REPLACE(REPLACE(REPLACE(COALESCE(i.codigo, ''), '_', ''), '-', ''), ' ', '')) = {p}
+                ORDER BY CASE WHEN LOWER(COALESCE(c.estado, '')) = 'activo' THEN 0 ELSE 1 END,
+                         c.fecha_inicio DESC,
+                         c.id DESC
+                LIMIT 1''',
+            (inmueble_key,)
+        )
+        row = cur.fetchone()
+
+    cur.close()
+
+    if not row:
+        return None
+
+    if isinstance(row, dict):
+        dia_pago = row.get('dia_pago')
+        fecha_inicio = row.get('fecha_inicio')
+    else:
+        dia_pago = row[3] if len(row) > 3 else None
+        fecha_inicio = row[1] if len(row) > 1 else None
+
+    due_day = None
+    try:
+        if dia_pago is not None:
+            due_day = int(dia_pago)
+    except (TypeError, ValueError):
+        due_day = None
+
+    if due_day is None:
+        fecha_inicio_date = coerce_date(fecha_inicio)
+        if fecha_inicio_date:
+            due_day = fecha_inicio_date.day
+
+    if due_day is None:
+        return None
+
+    due_day = max(1, min(due_day, last_day))
+    return datetime.date(year, month, due_day)
+
+
 def ensure_inmuebles_porcentaje_column(conn, cur):
     default_percentage = 30.0
     if get_database_url():
@@ -2052,6 +2154,29 @@ def api_get_inmueble_data(codigo_inmueble):
         }
 
 
+@app.route('/api/get-vencimiento-real')
+def api_get_vencimiento_real():
+    """API para obtener vencimiento contractual real por inquilino + inmueble + periodo."""
+    inquilino = (request.args.get('inquilino') or '').strip()
+    inmueble = (request.args.get('inmueble') or '').strip()
+    periodo = (request.args.get('periodo') or '').strip()
+
+    if not inquilino or not inmueble or not periodo:
+        return {'success': False, 'message': 'Completa inquilino, inmueble y periodo.'}
+
+    try:
+        conn = get_db_connection()
+        due_date = get_real_due_date_for_tenant_inmueble(conn, inquilino, inmueble, periodo)
+        conn.close()
+
+        if not due_date:
+            return {'success': False, 'message': 'No se encontro contrato valido para ese periodo.'}
+
+        return {'success': True, 'vencimiento': due_date.isoformat()}
+    except Exception as e:
+        return {'success': False, 'message': str(e)}
+
+
 @app.route('/cobranzas-rentas/add', methods=['GET', 'POST'])
 def add_cobranza_renta():
     if not is_admin():
@@ -2391,12 +2516,21 @@ def edit_cobranza_renta(entry_id):
     conn = get_db_connection()
     cur = get_cursor(conn)
     p = get_placeholder()
+    error = (request.args.get('err') or '').strip()
 
     if request.method == 'POST':
         inmueble_codigo = normalize_inmueble_codigo(request.form.get('inmueble'))
-        vencimiento = (request.form.get('vencimiento') or '').strip()
-        if not vencimiento:
-            vencimiento = get_active_contract_data(conn, inmueble_codigo)['fecha_inicio']
+        inquilino = (request.form.get('inquilino') or '').strip()
+        periodo = (request.form.get('periodo') or '').strip()
+        vencimiento_real = get_real_due_date_for_tenant_inmueble(conn, inquilino, inmueble_codigo, periodo)
+        if not vencimiento_real:
+            cur.close()
+            conn.close()
+            return redirect(url_for(
+                'edit_cobranza_renta',
+                entry_id=entry_id,
+                err='No se pudo calcular la fecha de vencimiento real. Verifica inquilino, inmueble y periodo.'
+            ))
         monto_real = get_inmueble_renta(conn, inmueble_codigo)
         cur.execute(
             f'''UPDATE gestor_cobranzas
@@ -2405,9 +2539,9 @@ def edit_cobranza_renta(entry_id):
                 WHERE id={p}''',
             (
                 inmueble_codigo,
-                request.form.get('inquilino'),
-                request.form.get('periodo'),
-                vencimiento or None,
+                inquilino,
+                periodo,
+                vencimiento_real,
                 monto_real,
                 to_float(request.form.get('monto_pagado') or 0),
                 request.form.get('estado') or 'Pendiente',
@@ -2422,12 +2556,28 @@ def edit_cobranza_renta(entry_id):
         return redirect(url_for('cobranzas_rentas'))
 
     cur.execute(f'SELECT * FROM gestor_cobranzas WHERE id={p}', (entry_id,))
-    entry = cur.fetchone()
+    entry_row = cur.fetchone()
+    entry = None
+    if entry_row:
+        if isinstance(entry_row, dict):
+            entry = dict(entry_row)
+        else:
+            entry = {key: entry_row[key] for key in entry_row.keys()}
+
+        due_date = get_real_due_date_for_tenant_inmueble(
+            conn,
+            entry.get('inquilino'),
+            entry.get('inmueble'),
+            entry.get('periodo'),
+        )
+        if due_date:
+            entry['vencimiento'] = due_date.isoformat()
+
     cur.close()
     conn.close()
     if not entry:
         return redirect(url_for('cobranzas_rentas'))
-    return render_template('edit_cobranza_renta.html', entry=entry)
+    return render_template('edit_cobranza_renta.html', entry=entry, error=error)
 
 
 @app.route('/cobranzas-rentas/<int:entry_id>/delete', methods=['POST'])
