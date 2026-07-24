@@ -2187,9 +2187,13 @@ def add_cobranza_renta():
         cur = conn.cursor()
         p = get_placeholder()
         inmueble_codigo = normalize_inmueble_codigo(request.form.get('inmueble'))
+        inquilino = (request.form.get('inquilino') or '').strip()
+        periodo = (request.form.get('periodo') or '').strip()
         vencimiento = (request.form.get('vencimiento') or '').strip()
-        if not vencimiento:
-            vencimiento = get_active_contract_data(conn, inmueble_codigo)['fecha_inicio']
+        if inquilino and inmueble_codigo and periodo:
+            due_date = get_real_due_date_for_tenant_inmueble(conn, inquilino, inmueble_codigo, periodo)
+            if due_date:
+                vencimiento = due_date.isoformat()
         monto_real = get_inmueble_renta(conn, inmueble_codigo)
         cur.execute(
             f'''INSERT INTO gestor_cobranzas
@@ -2197,8 +2201,8 @@ def add_cobranza_renta():
                 VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})''',
             (
                 inmueble_codigo,
-                request.form.get('inquilino'),
-                request.form.get('periodo'),
+                inquilino,
+                periodo,
                 vencimiento or None,
                 monto_real,
                 to_float(request.form.get('monto_pagado') or 0),

@@ -47,7 +47,8 @@
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Fecha Vencimiento</label>
-                            <input type="date" name="vencimiento" class="form-control" value="{{ fecha_default }}">
+                            <input type="date" name="vencimiento" class="form-control" id="vencimiento-field" value="{{ fecha_default }}" readonly>
+                            <small class="text-muted">Se calcula automaticamente segun el período seleccionado.</small>
                         </div>
                         <div class="col-md-3">
                             <label class="form-label">Fecha Pago</label>
@@ -89,8 +90,32 @@
             const inmuebleSelect = document.querySelector('select[name="inmueble"]');
             const inquilinoField = document.getElementById('inquilino-field');
             const montoField = document.getElementById('monto-field');
-            const vencimientoField = document.querySelector('input[name="vencimiento"]');
+            const periodoField = document.querySelector('input[name="periodo"]');
+            const vencimientoField = document.getElementById('vencimiento-field');
             const inquilinoStatus = document.getElementById('inquilino-status');
+
+            async function refreshDueDate() {
+                const codigo = (inmuebleSelect.value || '').trim();
+                const inquilino = (inquilinoField.value || '').trim();
+                const periodo = (periodoField.value || '').trim();
+
+                if (!codigo || !inquilino || !periodo) {
+                    vencimientoField.value = '';
+                    return;
+                }
+
+                const params = new URLSearchParams({ inmueble: codigo, inquilino, periodo });
+                const response = await fetch(`/api/get-vencimiento-real?${params.toString()}`);
+                const data = await response.json();
+
+                vencimientoField.value = data.success ? (data.vencimiento || '') : '';
+            }
+
+            periodoField.addEventListener('input', function() {
+                refreshDueDate().catch(() => {
+                    vencimientoField.value = '';
+                });
+            });
 
             inmuebleSelect.addEventListener('change', async function() {
                 const codigo = this.value;
@@ -111,16 +136,21 @@
                     if (data.success) {
                         const monto = Number(data.monto_renta || 0);
                         montoField.value = monto.toFixed(2);
-                        vencimientoField.value = data.fecha_inicio || '';
 
                         if (data.inquilino) {
                             inquilinoField.value = data.inquilino;
-                            inquilinoStatus.textContent = '✓ Inquilino, monto y vencimiento obtenidos del contrato activo';
+                            inquilinoStatus.textContent = '✓ Inquilino y monto obtenidos del contrato activo';
                             inquilinoStatus.style.color = 'green';
                         } else {
                             inquilinoField.value = '';
-                            inquilinoStatus.textContent = 'Monto y vencimiento cargados, pero no se encontró inquilino activo';
+                            inquilinoStatus.textContent = 'Monto cargado, pero no se encontró inquilino activo para calcular vencimiento';
                             inquilinoStatus.style.color = 'orange';
+                        }
+
+                        try {
+                            await refreshDueDate();
+                        } catch (dueDateError) {
+                            vencimientoField.value = '';
                         }
                     } else {
                         inquilinoField.value = '';
