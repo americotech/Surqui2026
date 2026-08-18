@@ -206,6 +206,22 @@ def normalize_inmueble_codigo(value):
     return code
 
 
+def deduplicate_cobranza_rows_by_inmueble_period(rows):
+    """Keep the latest row for each inmueble/period to avoid double counting duplicates."""
+    latest_rows = {}
+    for row in rows:
+        row_data = dict(row)
+        periodo = (row_data.get('periodo') or '').strip()
+        inmueble_key = inmueble_codigo_key(row_data.get('inmueble'))
+        if not periodo and not inmueble_key:
+            continue
+        key = (inmueble_key, periodo)
+        existing = latest_rows.get(key)
+        if existing is None or int(row_data.get('id') or 0) > int(existing.get('id') or 0):
+            latest_rows[key] = row_data
+    return list(latest_rows.values())
+
+
 def get_active_contract_data(conn, codigo_inmueble):
     """Return active contract data for an inmueble code, if available."""
     cur = get_cursor(conn)
@@ -1798,8 +1814,12 @@ def cobranzas_rentas():
 
     rows = rows_relacionados
 
-    rows_periodo = [r for r in rows if (r['periodo'] or '') == periodo_actual]
-    rows_periodo_anterior = [r for r in rows if (r['periodo'] or '') == periodo_anterior]
+    rows_periodo = deduplicate_cobranza_rows_by_inmueble_period([
+        r for r in rows if (r['periodo'] or '') == periodo_actual
+    ])
+    rows_periodo_anterior = deduplicate_cobranza_rows_by_inmueble_period([
+        r for r in rows if (r['periodo'] or '') == periodo_anterior
+    ])
     inmuebles_by_codigo = {
         inmueble_codigo_key(i['codigo']): i
         for i in inmuebles
