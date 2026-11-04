@@ -100,20 +100,17 @@
                         </div>
                         <div class="col-md-6">
                             <div class="mb-1 text-start">
-                                <strong>Gasto Father:</strong>
+                                <strong>Gasto Administrativo Fijo (Total):</strong>
                                 {% if editable %}
-                                <input type="number" step="0.01" min="0" name="gasto_father" class="form-control form-control-sm w-50 d-inline-block ms-2" value="{{ '%.2f'|format(gasto_father) }}">
+                                <input type="number" step="0.01" min="0" name="gasto_administrativo_usd" class="form-control form-control-sm w-50 d-inline-block ms-2" value="{{ '%.2f'|format(gasto_administrativo_usd) }}">
                                 <span class="ms-1">USD</span>
                                 {% else %}
-                                {{ "%.2f"|format(gasto_father) }} USD
+                                {{ "%.2f"|format(gasto_administrativo_usd) }} USD
                                 {% endif %}
+                                <div>S/. {{ "%.2f"|format(total_costo_administrativo) }}</div>
                             </div>
-                            <p class="mb-1 text-start"><strong>Gasto Administrativo (Total):</strong> S/. {{ "%.2f"|format(total_costo_administrativo) }} (USD {{ "%.2f"|format(total_costo_administrativo_usd) }})</p>
                             <p class="mb-1 text-start"><strong>Gastos Generales (Mes Actual):</strong> S/. {{ "%.2f"|format(gastos_generales_mes) }} (USD {{ "%.2f"|format(gastos_generales_mes_usd) }})</p>
-                            <div class="d-flex gap-2">
-                                <p class="mb-0 bg-primary text-white p-2 rounded text-start"><strong>Saldo Father:</strong> {{ "%.2f"|format(saldo_father) }} USD</p>
-                                <p class="mb-0 bg-success text-white p-2 rounded text-start"><strong>Saldo Mother:</strong> {{ "%.2f"|format(saldo_mother) }} USD</p>
-                            </div>
+                            <p class="mb-0 bg-success text-white p-2 rounded text-start"><strong>Saldo Mother:</strong> {{ "%.2f"|format(saldo_mother) }} USD</p>
                         </div>
                     </div>
                 </div>
@@ -126,10 +123,8 @@
                             <th>ID</th>
                             <th>Codigo</th>
                             <th>Departamento</th>
-                            <th>Porcentaje (%)</th>
                             <th>Renta</th>
                             <th>SUNAT</th>
-                            <th>Costo Administrativo</th>
                             <th>Ingreso Neto</th>
                             {% if editable %}<th>Acciones</th>{% endif %}
                         </tr>
@@ -141,16 +136,10 @@
                             <td class="fw-bold text-primary">{{ dep.codigo }}</td>
                             <td>{{ dep.descripcion }}</td>
                             <td>
-                                <input type="number" step="0.01" min="0" max="100" name="porcentaje_{{ dep.id }}" class="form-control text-end" value="{{ '%.2f'|format(dep.porcentaje) }}" {% if not editable %}disabled{% endif %}>
-                            </td>
-                            <td>
                                 <input type="number" step="0.01" name="renta_{{ dep.id }}" class="form-control" value="{{ dep.monto_renta }}" {% if not editable %}disabled{% endif %}>
                             </td>
                             <td>
                                 <input type="number" step="0.01" min="0" name="sunat_{{ dep.id }}" class="form-control" value="{{ '%.2f'|format(dep.sunat) }}" {% if not editable %}disabled{% endif %}>
-                            </td>
-                            <td class="bg-light text-end">
-                                <span class="badge bg-success fs-6">S/. {{ "%.2f"|format(dep.costo_administrativo) }}</span>
                             </td>
                             <td class="bg-light text-end">
                                 <span class="badge bg-info fs-6">S/. {{ "%.2f"|format(dep.ingreso_neto) }}</span>
@@ -196,10 +185,6 @@
                         <div class="col-md-2">
                             <label class="form-label">Renta (S/.)</label>
                             <input type="number" step="0.01" min="0" name="monto_renta" class="form-control" value="0.00">
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label">Porcentaje (%)</label>
-                            <input type="number" step="0.01" min="0" max="100" name="porcentaje" class="form-control" value="30.00">
                         </div>
                         <div class="col-md-2 d-flex align-items-end">
                             <button type="submit" class="btn btn-success w-100">Agregar</button>
