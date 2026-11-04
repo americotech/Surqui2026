@@ -53,7 +53,7 @@ def admin_redirect(redirect_endpoint='index'):
 
 @app.before_request
 def require_login_for_app():
-    public_endpoints = {'login', 'static', 'cuotas_pendientes_preview'}
+    public_endpoints = {'login', 'static'}
     if request.endpoint in public_endpoints:
         return
     if not is_authenticated():
@@ -159,13 +159,6 @@ def get_gasto_father(conn, cur):
     cur.execute('SELECT gasto_father FROM config WHERE id = 1')
     row = cur.fetchone()
     return row['gasto_father'] if row and row['gasto_father'] is not None else 300.0
-
-
-def get_pago_cuota(conn, cur):
-    """Get current Pago de Cuota amount from config."""
-    cur.execute('SELECT pago_cuota FROM config WHERE id = 1')
-    row = cur.fetchone()
-    return row['pago_cuota'] if row and row['pago_cuota'] is not None else 600.0
 
 
 def format_spanish_date(date_value):
@@ -417,12 +410,11 @@ def init_db():
     cur = conn.cursor()
     if is_postgres:
         # Sintaxis PostgreSQL
-        cur.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, dolar REAL, gasto_father REAL DEFAULT 300.0, pago_cuota REAL DEFAULT 600.0)')
+        cur.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, dolar REAL, gasto_father REAL DEFAULT 300.0)')
         cur.execute('ALTER TABLE config ADD COLUMN IF NOT EXISTS gasto_father REAL DEFAULT 300.0')
-        cur.execute('ALTER TABLE config ADD COLUMN IF NOT EXISTS pago_cuota REAL DEFAULT 600.0')
-        cur.execute('INSERT INTO config (id, dolar, gasto_father, pago_cuota) VALUES (1, 3.4, 300.0, 600.0) ON CONFLICT (id) DO NOTHING')
+        cur.execute('ALTER TABLE config DROP COLUMN IF EXISTS pago_cuota')
+        cur.execute('INSERT INTO config (id, dolar, gasto_father) VALUES (1, 3.4, 300.0) ON CONFLICT (id) DO NOTHING')
         cur.execute('UPDATE config SET gasto_father = 300.0 WHERE id = 1 AND gasto_father IS NULL')
-        cur.execute('UPDATE config SET pago_cuota = 600.0 WHERE id = 1 AND pago_cuota IS NULL')
         cur.execute('''
             CREATE TABLE IF NOT EXISTS gastos (
                 id SERIAL PRIMARY KEY,
@@ -523,16 +515,15 @@ def init_db():
         placeholder = '%s'
     else:
         # Sintaxis SQLite
-        cur.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, dolar REAL, gasto_father REAL DEFAULT 300.0, pago_cuota REAL DEFAULT 600.0)')
+        cur.execute('CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY, dolar REAL, gasto_father REAL DEFAULT 300.0)')
         cur.execute('PRAGMA table_info(config)')
         config_columns = {row[1] for row in cur.fetchall()}
         if 'gasto_father' not in config_columns:
             cur.execute('ALTER TABLE config ADD COLUMN gasto_father REAL DEFAULT 300.0')
-        if 'pago_cuota' not in config_columns:
-            cur.execute('ALTER TABLE config ADD COLUMN pago_cuota REAL DEFAULT 600.0')
-        cur.execute('INSERT OR IGNORE INTO config (id, dolar, gasto_father, pago_cuota) VALUES (1, 3.4, 300.0, 600.0)')
+        if 'pago_cuota' in config_columns:
+            cur.execute('ALTER TABLE config DROP COLUMN pago_cuota')
+        cur.execute('INSERT OR IGNORE INTO config (id, dolar, gasto_father) VALUES (1, 3.4, 300.0)')
         cur.execute('UPDATE config SET gasto_father = 300.0 WHERE id = 1 AND gasto_father IS NULL')
-        cur.execute('UPDATE config SET pago_cuota = 600.0 WHERE id = 1 AND pago_cuota IS NULL')
         cur.execute('''
             CREATE TABLE IF NOT EXISTS gastos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1025,7 +1016,6 @@ def index():
         inmuebles_rows = cur.fetchall()
         dolar = get_dolar_rate(conn, cur)
         gasto_father = get_gasto_father(conn, cur)
-        pago_cuota = get_pago_cuota(conn, cur)
         cur.execute('SELECT fecha, costo FROM gastos')
         gastos_rows = cur.fetchall()
         gastos_generales_mes = 0.0
@@ -1038,7 +1028,6 @@ def index():
         inmuebles_rows = []
         dolar = 1.0
         gasto_father = 300.0
-        pago_cuota = 600.0
         gastos_generales_mes = 0.0
     finally:
         cur.close()
@@ -1081,10 +1070,7 @@ def index():
     total_costo_administrativo_usd = total_costo_administrativo / dolar if dolar else 0.0
     gastos_generales_mes_usd = gastos_generales_mes / dolar if dolar else 0.0
     saldo_father = total_ingreso_dolares * 0.5
-    saldo_mother = total_ingreso_dolares - pago_cuota - gasto_father - total_costo_administrativo_usd - saldo_father
-    
-    # Cuotas pendientes deshabilitadas: valor fijo en 0.
-    cuotas_pendientes = 0
+    saldo_mother = total_ingreso_dolares - gasto_father - total_costo_administrativo_usd - saldo_father
     
     editable = is_admin()
     return render_template(
@@ -1095,13 +1081,11 @@ def index():
         total_ingreso_dolares=total_ingreso_dolares,
         total_costo_administrativo=total_costo_administrativo,
         total_costo_administrativo_usd=total_costo_administrativo_usd,
-        pago_cuota=pago_cuota,
         gasto_father=gasto_father,
         gastos_generales_mes=gastos_generales_mes,
         gastos_generales_mes_usd=gastos_generales_mes_usd,
         saldo_mother=saldo_mother,
         saldo_father=saldo_father,
-        cuotas_pendientes=cuotas_pendientes,
         editable=editable,
         current_date=current_date.strftime("%d/%m/%Y"),
         message=(request.args.get('msg') or '').strip(),
@@ -1143,33 +1127,30 @@ def update():
     cur = get_cursor(conn)
     placeholder = get_placeholder()
 
-    # Update config values (dolar, gasto_father y pago_cuota) preservando el valor existente
-    cur.execute('SELECT dolar, gasto_father, pago_cuota FROM config WHERE id = 1')
+    # Update config values (dolar y gasto_father) preservando el valor existente
+    cur.execute('SELECT dolar, gasto_father FROM config WHERE id = 1')
     config_row = cur.fetchone()
     dolar_actual = to_float(config_row['dolar'] if config_row else 3.4, 3.4)
     gasto_father_actual = to_float(config_row['gasto_father'] if config_row else 300.0, 300.0)
-    pago_cuota_actual = to_float(config_row['pago_cuota'] if config_row else 600.0, 600.0)
 
     nuevo_dolar_raw = (request.form.get('precio_dolar') or '').strip()
     nuevo_gasto_father_raw = (request.form.get('gasto_father') or '').strip()
-    nuevo_pago_cuota_raw = (request.form.get('pago_cuota') or '').strip()
 
     dolar_a_guardar = to_float(nuevo_dolar_raw, dolar_actual) if nuevo_dolar_raw else dolar_actual
     gasto_father_a_guardar = to_float(nuevo_gasto_father_raw, gasto_father_actual) if nuevo_gasto_father_raw else gasto_father_actual
-    pago_cuota_a_guardar = to_float(nuevo_pago_cuota_raw, pago_cuota_actual) if nuevo_pago_cuota_raw else pago_cuota_actual
 
-    if nuevo_dolar_raw or nuevo_gasto_father_raw or nuevo_pago_cuota_raw:
+    if nuevo_dolar_raw or nuevo_gasto_father_raw:
         if get_database_url():
             cur.execute(
-                f'INSERT INTO config (id, dolar, gasto_father, pago_cuota) VALUES (1, {placeholder}, {placeholder}, {placeholder}) '
-                f'ON CONFLICT (id) DO UPDATE SET dolar = EXCLUDED.dolar, gasto_father = EXCLUDED.gasto_father, pago_cuota = EXCLUDED.pago_cuota',
-                (dolar_a_guardar, gasto_father_a_guardar, pago_cuota_a_guardar)
+                f'INSERT INTO config (id, dolar, gasto_father) VALUES (1, {placeholder}, {placeholder}) '
+                f'ON CONFLICT (id) DO UPDATE SET dolar = EXCLUDED.dolar, gasto_father = EXCLUDED.gasto_father',
+                (dolar_a_guardar, gasto_father_a_guardar)
             )
         else:
             cur.execute(
-                f'INSERT INTO config (id, dolar, gasto_father, pago_cuota) VALUES (1, {placeholder}, {placeholder}, {placeholder}) '
-                f'ON CONFLICT(id) DO UPDATE SET dolar=excluded.dolar, gasto_father=excluded.gasto_father, pago_cuota=excluded.pago_cuota',
-                (dolar_a_guardar, gasto_father_a_guardar, pago_cuota_a_guardar)
+                f'INSERT INTO config (id, dolar, gasto_father) VALUES (1, {placeholder}, {placeholder}) '
+                f'ON CONFLICT(id) DO UPDATE SET dolar=excluded.dolar, gasto_father=excluded.gasto_father',
+                (dolar_a_guardar, gasto_father_a_guardar)
             )
     
     # Update inmuebles (renta, porcentaje y sunat)
@@ -1185,7 +1166,7 @@ def update():
     conn.commit()
     cur.close()
     conn.close()
-    return redirect(url_for('index', msg='Cambios guardados correctamente (dolar, pago cuota, gasto father, renta y porcentaje).'))
+    return redirect(url_for('index', msg='Cambios guardados correctamente (dolar, gasto father, renta y porcentaje).'))
 
 
 @app.route('/inmuebles/add', methods=['POST'])
@@ -1369,14 +1350,6 @@ def download_cronograma():
 @app.route('/images/<path:filename>')
 def serve_image(filename):
     return send_from_directory(os.path.join(app.root_path, 'images'), filename)
-
-
-@app.route('/images/cuotas-pendientes-preview')
-def cuotas_pendientes_preview():
-    return send_from_directory(
-        os.path.join(app.root_path, 'images'),
-        'corrección hoja de cuotas.png'
-    )
 
 
 @app.route('/gastos/semana')
