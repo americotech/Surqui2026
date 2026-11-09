@@ -356,7 +356,7 @@ def get_real_due_date_for_tenant_inmueble(conn, inquilino_nombre, codigo_inmuebl
     return datetime.date(year, month, due_day)
 
 
-def ensure_inmuebles_porcentaje_column(conn, cur):
+def ensure_inmuebles_panel_columns(conn, cur):
     default_percentage = 30.0
     if get_database_url():
         cur.execute(
@@ -383,6 +383,19 @@ def ensure_inmuebles_porcentaje_column(conn, cur):
         if not cur.fetchone():
             cur.execute('ALTER TABLE inmuebles ADD COLUMN sunat REAL DEFAULT 0.0')
             conn.commit()
+        cur.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'inmuebles' AND column_name = 'estado_actual'
+            """
+        )
+        if not cur.fetchone():
+            cur.execute("ALTER TABLE inmuebles ADD COLUMN estado_actual TEXT DEFAULT 'pendientes'")
+            conn.commit()
+        cur.execute(
+            "UPDATE inmuebles SET estado_actual = 'pendientes' WHERE estado_actual IS NULL"
+        )
     else:
         cur.execute('PRAGMA table_info(inmuebles)')
         columns = {row[1] for row in cur.fetchall()}
@@ -395,6 +408,14 @@ def ensure_inmuebles_porcentaje_column(conn, cur):
         if 'sunat' not in columns:
             cur.execute('ALTER TABLE inmuebles ADD COLUMN sunat REAL DEFAULT 0.0')
             conn.commit()
+        cur.execute('PRAGMA table_info(inmuebles)')
+        columns = {row[1] for row in cur.fetchall()}
+        if 'estado_actual' not in columns:
+            cur.execute("ALTER TABLE inmuebles ADD COLUMN estado_actual TEXT DEFAULT 'pendientes'")
+            conn.commit()
+        cur.execute(
+            "UPDATE inmuebles SET estado_actual = 'pendientes' WHERE estado_actual IS NULL"
+        )
 
 
 MESES_ES = [
@@ -402,6 +423,7 @@ MESES_ES = [
     'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
 ]
 DIAS_ES = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo']
+ESTADOS_ACTUALES_RENTA = ('pagado', 'pendientes', 'parcial')
 
 # --- INICIALIZACIÓN DE BASE DE DATOS ---
 def init_db():
@@ -462,7 +484,8 @@ def init_db():
                 tipo TEXT DEFAULT 'Departamento',
                 estado TEXT DEFAULT 'Disponible',
                 monto_renta REAL DEFAULT 0.0,
-                porcentaje REAL DEFAULT 30.0
+                porcentaje REAL DEFAULT 30.0,
+                estado_actual TEXT DEFAULT 'pendientes'
             )
         ''')
         cur.execute('''
@@ -574,7 +597,8 @@ def init_db():
                 tipo TEXT DEFAULT 'Departamento',
                 estado TEXT DEFAULT 'Disponible',
                 monto_renta REAL DEFAULT 0.0,
-                porcentaje REAL DEFAULT 30.0
+                porcentaje REAL DEFAULT 30.0,
+                estado_actual TEXT DEFAULT 'pendientes'
             )
         ''')
         cur.execute('''
@@ -633,7 +657,7 @@ def init_db():
         """
     )
 
-    ensure_inmuebles_porcentaje_column(conn, cur)
+    ensure_inmuebles_panel_columns(conn, cur)
 
     # Canonicalize legacy aliases before further processing.
     cur.execute(
@@ -1026,7 +1050,7 @@ def index():
     current_date = datetime.date.today()
 
     try:
-        cur.execute('SELECT id, codigo, descripcion, monto_renta, sunat FROM inmuebles ORDER BY id ASC')
+        cur.execute('SELECT id, codigo, descripcion, monto_renta, sunat, estado_actual FROM inmuebles ORDER BY id ASC')
         inmuebles_rows = cur.fetchall()
         dolar = get_dolar_rate(conn, cur)
         gasto_administrativo_usd = get_gasto_administrativo_usd(conn, cur)
@@ -1059,6 +1083,7 @@ def index():
             'monto_renta': monto_renta,
             'ingreso_neto': ingreso_neto,
             'sunat': to_float(dep['sunat']) if dep['sunat'] is not None else 0.0,
+            'estado_actual': dep['estado_actual'] or 'pendientes',
         })
 
     # Orden visual del panel: 1P, luego 2P, y SJM al final (3P_SJM ultimo).
@@ -1099,6 +1124,7 @@ def index():
         gastos_generales_mes_usd=gastos_generales_mes_usd,
         saldo_mother=saldo_mother,
         editable=editable,
+        estados_actuales_renta=ESTADOS_ACTUALES_RENTA,
         current_date=current_date.strftime("%d/%m/%Y"),
         message=(request.args.get('msg') or '').strip(),
         error=(request.args.get('err') or '').strip(),
@@ -1152,6 +1178,14 @@ def update():
     conn = get_db_connection()
     cur = get_cursor(conn)
     placeholder = get_placeholder()
+    inmueble_ids = request.form.getlist('id')
+
+    for inmueble_id in inmueble_ids:
+        estado_actual = request.form.get(f'estado_actual_{inmueble_id}')
+        if estado_actual is not None and estado_actual not in ESTADOS_ACTUALES_RENTA:
+            cur.close()
+            conn.close()
+            return redirect(url_for('index', err='El estado actual seleccionado no es válido.'))
 
     # Update config values preserving any values omitted from the form.
     cur.execute('SELECT dolar, gasto_administrativo_usd FROM config WHERE id = 1')
@@ -1187,13 +1221,20 @@ def update():
             )
     
     # Update inmuebles (renta y sunat)
-    for inmueble_id in request.form.getlist('id'):
+    for inmueble_id in inmueble_ids:
         renta = to_float(request.form.get(f'renta_{inmueble_id}'))
         sunat = to_float(request.form.get(f'sunat_{inmueble_id}'))
-        cur.execute(
-            f'UPDATE inmuebles SET monto_renta={placeholder}, sunat={placeholder} WHERE id={placeholder}',
-            (renta, sunat, int(inmueble_id))
-        )
+        estado_actual = request.form.get(f'estado_actual_{inmueble_id}')
+        if estado_actual is None:
+            cur.execute(
+                f'UPDATE inmuebles SET monto_renta={placeholder}, sunat={placeholder} WHERE id={placeholder}',
+                (renta, sunat, int(inmueble_id))
+            )
+        else:
+            cur.execute(
+                f'UPDATE inmuebles SET monto_renta={placeholder}, sunat={placeholder}, estado_actual={placeholder} WHERE id={placeholder}',
+                (renta, sunat, estado_actual, int(inmueble_id))
+            )
     
     conn.commit()
     cur.close()
