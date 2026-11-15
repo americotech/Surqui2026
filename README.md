@@ -35,6 +35,7 @@ Datos demo:
 Notas:
 - La ruta del proyecto es el directorio que contiene `app.py`.
 - El servidor corre por defecto en http://127.0.0.1:5000/ en modo debug.
+- Las fotos de prueba de Gastos Generales se guardan en la tabla `gasto_fotos` de la base de datos configurada: PostgreSQL/Neon con una variable `DATABASE_URL` (o equivalente), o `gestion.db` en ejecuciones locales.
 
 Migrar tablas clave a Neon (gestor_cobranzas2)
 

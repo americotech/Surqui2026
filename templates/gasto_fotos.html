@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Pruebas del gasto</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2 class="mb-1">Pruebas del gasto</h2>
+                <p class="text-muted mb-0">{{ gasto.nombre_gasto }} - {{ gasto.fecha }}</p>
+            </div>
+            <a href="{{ url_for('gastos') }}" class="btn btn-outline-secondary">Volver a gastos</a>
+        </div>
+
+        {% if error %}
+        <div class="alert alert-danger" role="alert">{{ error }}</div>
+        {% endif %}
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Fotos registradas ({{ fotos|length }}/2)</h5>
+                {% if fotos %}
+                <div class="row g-3">
+                    {% for foto in fotos %}
+                    <div class="col-sm-6 col-md-4">
+                        <div class="border rounded p-2 h-100">
+                            <a href="{{ url_for('serve_gasto_foto', foto_id=foto.id) }}" target="_blank" rel="noopener">
+                                <img src="{{ url_for('serve_gasto_foto', foto_id=foto.id) }}" alt="Prueba de {{ gasto.nombre_gasto }}" class="img-fluid rounded mb-2" style="max-height: 240px; width: 100%; object-fit: contain;">
+                            </a>
+                            <div class="d-flex justify-content-between align-items-center gap-2">
+                                <span class="text-break small">{{ foto.nombre_archivo }}</span>
+                                <form method="POST" action="{{ url_for('delete_gasto_foto', gasto_id=gasto.id, foto_id=foto.id) }}" onsubmit="return confirm('¿Eliminar esta foto?');">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm">Eliminar</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted mb-0">Todavía no hay fotos registradas para este gasto.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if espacios_disponibles > 0 %}
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">Agregar fotos</h5>
+                <p class="text-muted">Puedes guardar hasta dos fotos por gasto. Formatos permitidos: JPG, PNG y WEBP; máximo 5 MB por foto. Te quedan {{ espacios_disponibles }} espacio(s).</p>
+                <form method="POST" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="fotos" class="form-label">
+                            {% if espacios_disponibles == 1 %}Seleccionar una foto{% else %}Seleccionar una o dos fotos{% endif %}
+                        </label>
+                        <input type="file" class="form-control" id="fotos" name="fotos" accept=".jpg,.jpeg,.png,.webp" multiple required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Guardar fotos</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

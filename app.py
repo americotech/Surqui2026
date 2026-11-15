@@ -3,9 +3,11 @@ import sqlite3
 import datetime
 import calendar
 import importlib
+from io import BytesIO
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory
+from flask import Flask, render_template, request, redirect, url_for, session, send_file, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 try:
     from dotenv import load_dotenv
@@ -17,6 +19,15 @@ except ModuleNotFoundError:
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'supersecretkey')
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['MAX_CONTENT_LENGTH'] = 11 * 1024 * 1024
+
+GASTO_FOTO_MAX_BYTES = 5 * 1024 * 1024
+GASTO_FOTO_TYPES = {
+    '.jpg': ('image/jpeg', lambda content: content.startswith(b'\xff\xd8\xff')),
+    '.jpeg': ('image/jpeg', lambda content: content.startswith(b'\xff\xd8\xff')),
+    '.png': ('image/png', lambda content: content.startswith(b'\x89PNG\r\n\x1a\n')),
+    '.webp': ('image/webp', lambda content: content[:4] == b'RIFF' and content[8:12] == b'WEBP'),
+}
 
 
 def is_authenticated():
@@ -452,6 +463,16 @@ def init_db():
             )
         ''')
         cur.execute('''
+            CREATE TABLE IF NOT EXISTS gasto_fotos (
+                id SERIAL PRIMARY KEY,
+                gasto_id INTEGER NOT NULL REFERENCES gastos(id) ON DELETE CASCADE,
+                nombre_archivo TEXT NOT NULL,
+                tipo_mime TEXT NOT NULL,
+                contenido BYTEA NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
             CREATE TABLE IF NOT EXISTS cronograma_pagos (
                 id SERIAL PRIMARY KEY,
                 item INTEGER,
@@ -562,6 +583,16 @@ def init_db():
                 categoria TEXT DEFAULT 'Otros',
                 costo REAL NOT NULL,
                 monto REAL DEFAULT 0.0
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS gasto_fotos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gasto_id INTEGER NOT NULL REFERENCES gastos(id) ON DELETE CASCADE,
+                nombre_archivo TEXT NOT NULL,
+                tipo_mime TEXT NOT NULL,
+                contenido BLOB NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         cur.execute('''
@@ -1135,12 +1166,133 @@ def gastos():
     conn = get_db_connection()
     cur = get_cursor(conn)
     dolar = get_dolar_rate(conn, cur)
-    cur.execute('SELECT * FROM gastos ORDER BY fecha DESC')
+    cur.execute('''
+        SELECT gastos.*,
+               (SELECT COUNT(*) FROM gasto_fotos WHERE gasto_id = gastos.id) AS foto_count
+        FROM gastos
+        ORDER BY fecha DESC
+    ''')
     gastos_list = cur.fetchall()
     total_gastos = sum(float(g['costo'] or 0) for g in gastos_list)
     cur.close()
     conn.close()
     return render_template('gastos.html', editable=is_admin(), dolar=dolar, total_gastos=total_gastos, total_gastos_usd=total_gastos/dolar, gastos=gastos_list)
+
+
+@app.route('/gastos/<int:gasto_id>/fotos', methods=['GET', 'POST'])
+@admin_redirect('gastos')
+def manage_gasto_fotos(gasto_id):
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+    cur.execute(f'SELECT * FROM gastos WHERE id={p}', (gasto_id,))
+    gasto = cur.fetchone()
+    if not gasto:
+        cur.close()
+        conn.close()
+        return redirect(url_for('gastos'))
+
+    error = None
+    if request.method == 'POST':
+        uploaded_files = [
+            foto for foto in request.files.getlist('fotos')
+            if foto and foto.filename
+        ]
+        cur.execute(f'SELECT COUNT(*) AS total FROM gasto_fotos WHERE gasto_id={p}', (gasto_id,))
+        current_count = cur.fetchone()['total']
+        if not uploaded_files:
+            error = 'Selecciona al menos una foto para guardar.'
+        elif len(uploaded_files) > 2 or current_count + len(uploaded_files) > 2:
+            error = 'Cada gasto puede tener como máximo dos fotos.'
+
+        photos_to_save = []
+        if not error:
+            for foto in uploaded_files:
+                safe_name = secure_filename(foto.filename or '')
+                extension = os.path.splitext(safe_name)[1].lower()
+                foto_type = GASTO_FOTO_TYPES.get(extension)
+                if not foto_type:
+                    error = 'Usa imágenes JPG, PNG o WEBP.'
+                    break
+                content = foto.stream.read(GASTO_FOTO_MAX_BYTES + 1)
+                if not content:
+                    error = 'No se pudo leer una de las fotos seleccionadas.'
+                    break
+                if len(content) > GASTO_FOTO_MAX_BYTES:
+                    error = 'Cada foto debe pesar como máximo 5 MB.'
+                    break
+                mime_type, is_valid_image = foto_type
+                if not is_valid_image(content):
+                    error = 'El contenido de una de las fotos no coincide con su formato.'
+                    break
+                photos_to_save.append((safe_name, mime_type, content))
+
+        if not error:
+            for nombre_archivo, tipo_mime, contenido in photos_to_save:
+                cur.execute(
+                    f'INSERT INTO gasto_fotos (gasto_id, nombre_archivo, tipo_mime, contenido) VALUES ({p}, {p}, {p}, {p})',
+                    (gasto_id, nombre_archivo, tipo_mime, contenido),
+                )
+            conn.commit()
+            cur.close()
+            conn.close()
+            return redirect(url_for('manage_gasto_fotos', gasto_id=gasto_id))
+
+    cur.execute(
+        f'SELECT id, nombre_archivo FROM gasto_fotos WHERE gasto_id={p} ORDER BY id',
+        (gasto_id,),
+    )
+    fotos = cur.fetchall()
+    cur.close()
+    conn.close()
+    return render_template(
+        'gasto_fotos.html',
+        gasto=gasto,
+        fotos=fotos,
+        espacios_disponibles=2 - len(fotos),
+        error=error,
+    ), 400 if error else 200
+
+
+@app.route('/gastos/fotos/<int:foto_id>')
+def serve_gasto_foto(foto_id):
+    conn = get_db_connection()
+    cur = get_cursor(conn)
+    p = get_placeholder()
+    cur.execute(
+        f'SELECT nombre_archivo, tipo_mime, contenido FROM gasto_fotos WHERE id={p}',
+        (foto_id,),
+    )
+    foto = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not foto:
+        return '', 404
+    response = send_file(
+        BytesIO(foto['contenido']),
+        mimetype=foto['tipo_mime'],
+        download_name=foto['nombre_archivo'],
+        max_age=0,
+    )
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+@app.route('/gastos/<int:gasto_id>/fotos/<int:foto_id>/delete', methods=['POST'])
+@admin_redirect('gastos')
+def delete_gasto_foto(gasto_id, foto_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    p = get_placeholder()
+    cur.execute(
+        f'DELETE FROM gasto_fotos WHERE id={p} AND gasto_id={p}',
+        (foto_id, gasto_id),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return redirect(url_for('manage_gasto_fotos', gasto_id=gasto_id))
+
 
 @app.route('/gastos/add', methods=['GET', 'POST'])
 @admin_redirect('gastos')
@@ -1627,6 +1779,7 @@ def delete_gasto(gasto_id):
     conn = get_db_connection()
     cur = conn.cursor()
     p = get_placeholder()
+    cur.execute(f'DELETE FROM gasto_fotos WHERE gasto_id={p}', (gasto_id,))
     cur.execute(f'DELETE FROM gastos WHERE id={p}', (gasto_id,))
     conn.commit()
     cur.close()
